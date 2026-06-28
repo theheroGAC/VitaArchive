@@ -34,5 +34,8 @@ void zip_close(ArchiveInfo *info);
 int is_zip_file(const char *path);
 int is_rar_file(const char *path);
 int is_7z_file(const char *path);
+int is_tar_file(const char *path);
+int is_gzip_file(const char *path);
+int is_bzip2_file(const char *path);
 
 #endif

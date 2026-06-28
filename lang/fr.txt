@@ -1,34 +1,53 @@
 VitaArchive
-Navigateur de Fichiers
+Navigateur de fichiers
 Chemin
-Contenu de l'Archive
-Contenu de l'Archive
+Contenu de l'archive
+Contenu de l'archive
 Fichiers
 Taille
 Extraction
 Progression
-Info Archive
-Total Fichiers
-Taille Non Compressée
-Taille Compressée
-Taux de Compression
+Info archive
+Total fichiers
+Taille non compressée
+Taille compressée
+Taux de compression
 [DIR]
 Sélectionner/Entrer
 Retour
 Info
 Quitter
-Extraire Tout
+Extraire tout
 Annuler
-Annuler Extraction
+Annuler extraction
 Appuyez sur X pour extraire
 Support RAR nécessite libunrar
 Support 7z nécessite LZMA SDK
 Installation VPK
-Extraction Terminée
-Extraction Annulée
+Extraction terminée
+Extraction annulée
 Erreur ouverture archive
 Erreur extraction
 Installer VPK
 VPK installé avec succès
 Échec installation VPK
 Installer VPK
+Paramètres
+Langue
+Sélectionner le dossier de destination
+Confirmer la destination
+Créer ZIP
+Sélectionner/Désélectionner
+Nom
+Type
+Dossier
+Fichier
+Compressé
+Extraction des fichiers...
+Terminé !
+Smart Install
+`eboot.bin` détecté dans cette archive.
+Installer cette archive comme application PSVita ?
+Installation de l'application
+Application installée avec succès
+Échec de l'installation de l'application

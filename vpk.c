@@ -14,6 +14,11 @@ int is_vpk_file(const char *path) {
     return ext && strcasecmp(ext, ".vpk") == 0;
 }
 
+static const char *path_basename(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
 static int remove_path_recursive(const char *path) {
     SceIoStat stat;
     if (sceIoGetstat(path, &stat) < 0) {
@@ -57,6 +62,53 @@ static int ensure_parent_dirs(const char *path) {
 static int file_exists(const char *path) {
     SceIoStat stat;
     return sceIoGetstat(path, &stat) >= 0 && SCE_S_ISREG(stat.st_mode);
+}
+
+static int dir_exists(const char *path) {
+    SceIoStat stat;
+    return sceIoGetstat(path, &stat) >= 0 && SCE_S_ISDIR(stat.st_mode);
+}
+
+static int directory_has_vita_app(const char *path) {
+    char eboot_path[512];
+    char param_path[512];
+
+    snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", path);
+    snprintf(param_path, sizeof(param_path), "%s/sce_sys/param.sfo", path);
+
+    return file_exists(eboot_path) && file_exists(param_path);
+}
+
+static int find_vita_app_root_recursive(const char *path, char *out_path, size_t out_size) {
+    if (directory_has_vita_app(path)) {
+        strncpy(out_path, path, out_size - 1);
+        out_path[out_size - 1] = '\0';
+        return 0;
+    }
+
+    SceUID dfd = sceIoDopen(path);
+    if (dfd < 0) {
+        return -1;
+    }
+
+    SceIoDirent ent;
+    char child[512];
+    int found = -1;
+
+    while (sceIoDread(dfd, &ent) > 0) {
+        if (strcmp(ent.d_name, ".") == 0 || strcmp(ent.d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(child, sizeof(child), "%s/%s", path, ent.d_name);
+        if (dir_exists(child) && find_vita_app_root_recursive(child, out_path, out_size) == 0) {
+            found = 0;
+            break;
+        }
+    }
+
+    sceIoDclose(dfd);
+    return found;
 }
 
 static int promote_pkg(const char *path) {
@@ -114,6 +166,57 @@ static int install_extracted_vpk(const char *vpk_path, int *progress) {
     }
 
     int res = promote_pkg(VPK_PKG_DIR);
+    remove_path_recursive(VPK_PKG_DIR);
+
+    if (progress) {
+        *progress = res == 0 ? 100 : *progress;
+    }
+
+    return res;
+}
+
+int archive_contains_homebrew(const ArchiveInfo *info) {
+    if (!info) return 0;
+
+    for (int i = 0; i < info->file_count; i++) {
+        const char *name = path_basename(info->files[i].filename);
+        if (strcasecmp(name, "eboot.bin") == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int vpk_install_homebrew_from_archive(ArchiveInfo *archive_info, int *progress) {
+    if (!archive_info || !archive_info->is_open || !archive_contains_homebrew(archive_info)) {
+        return -1;
+    }
+
+    if (progress) {
+        *progress = 0;
+    }
+
+    remove_path_recursive(VPK_PKG_DIR);
+    ensure_parent_dirs(VPK_PKG_DIR);
+    sceIoMkdir(VPK_PKG_DIR, 0777);
+
+    if (zip_extract_all(VPK_PKG_DIR "/", archive_info, progress) < 0) {
+        remove_path_recursive(VPK_PKG_DIR);
+        return -2;
+    }
+
+    char app_root[512];
+    if (find_vita_app_root_recursive(VPK_PKG_DIR, app_root, sizeof(app_root)) < 0) {
+        remove_path_recursive(VPK_PKG_DIR);
+        return -3;
+    }
+
+    if (progress) {
+        *progress = 95;
+    }
+
+    int res = promote_pkg(app_root);
     remove_path_recursive(VPK_PKG_DIR);
 
     if (progress) {

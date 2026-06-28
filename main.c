@@ -70,8 +70,14 @@ typedef enum {
     MODE_INFO,
     MODE_SETTINGS,
     MODE_DEST_BROWSER,
-    MODE_ZIP_CREATION
+    MODE_ZIP_CREATION,
+    MODE_SMART_INSTALL_CONFIRM
 } AppMode;
+
+typedef enum {
+    INSTALL_MODE_VPK,
+    INSTALL_MODE_APP
+} InstallMode;
 
 static AppMode current_mode = MODE_BROWSER;
 static FileBrowser browser;
@@ -85,9 +91,76 @@ static Language lang;
 static vita2d_pgf *font = NULL;
 static int settings_selected = 0;
 static char extraction_dest_path[MAX_PATH];
+static InstallMode current_install_mode = INSTALL_MODE_VPK;
 
 void save_settings();
 void load_settings();
+
+static int archive_can_smart_install(const ArchiveInfo *info) {
+    return info && info->is_open && is_zip_file(info->archive_path) && archive_contains_homebrew(info);
+}
+
+static void get_file_visuals(const char *path, int is_directory, const char **icon, uint32_t *icon_color) {
+    if (is_directory) {
+        *icon = "[DIR]";
+        *icon_color = RGBA8(241, 196, 15, 255);
+        return;
+    }
+
+    if (is_vpk_file(path)) {
+        *icon = "[VPK]";
+        *icon_color = RGBA8(46, 204, 113, 255);
+    } else if (is_zip_file(path)) {
+        *icon = "[ZIP]";
+        *icon_color = RGBA8(52, 152, 219, 255);
+    } else if (is_tar_file(path)) {
+        *icon = "[TAR]";
+        *icon_color = RGBA8(230, 126, 34, 255);
+    } else if (is_gzip_file(path)) {
+        *icon = "[GZ]";
+        *icon_color = RGBA8(26, 188, 156, 255);
+    } else if (is_bzip2_file(path)) {
+        *icon = "[BZ2]";
+        *icon_color = RGBA8(241, 196, 15, 255);
+    } else if (is_rar_file(path)) {
+        *icon = "[RAR]";
+        *icon_color = RGBA8(231, 76, 60, 255);
+    } else if (is_7z_file(path)) {
+        *icon = "[7Z]";
+        *icon_color = RGBA8(155, 89, 182, 255);
+    } else {
+        *icon = "[FILE]";
+        *icon_color = RGBA8(110, 118, 129, 255);
+    }
+}
+
+static const char *get_file_type_label(const char *path, int is_directory) {
+    if (is_directory) {
+        return language_get(&lang, STR_FOLDER);
+    }
+    if (is_vpk_file(path)) {
+        return "VPK";
+    }
+    if (is_zip_file(path)) {
+        return "ZIP";
+    }
+    if (is_tar_file(path)) {
+        return "TAR";
+    }
+    if (is_gzip_file(path)) {
+        return "GZIP";
+    }
+    if (is_bzip2_file(path)) {
+        return "BZIP2";
+    }
+    if (is_rar_file(path)) {
+        return "RAR";
+    }
+    if (is_7z_file(path)) {
+        return "7Z";
+    }
+    return language_get(&lang, STR_FILE);
+}
 
 void draw_progress_bar(int x, int y, int width, int height, int progress) {
     vita2d_draw_rectangle(x, y, width, height, 0xFFFFFFFF);
@@ -117,9 +190,9 @@ void draw_browser() {
     
     int header_y = 85;
     vita2d_draw_rectangle(0, header_y, 960, 25, RGBA8(33, 38, 45, 255));
-    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Name");
-    vita2d_pgf_draw_textf(font, 600, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Size");
-    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Type");
+    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_NAME));
+    vita2d_pgf_draw_textf(font, 600, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_SIZE));
+    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_TYPE));
     int start_y = 110;
     int line_height = 22;
     int visible_files = (510 - start_y) / line_height;
@@ -137,8 +210,9 @@ void draw_browser() {
             vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(22, 27, 34, 255));
         }
         
-        const char *icon = file->is_directory ? "[DIR]" : "[FILE]";
-        uint32_t icon_color = file->is_directory ? RGBA8(241, 196, 15, 255) : RGBA8(110, 118, 129, 255);
+        const char *icon = NULL;
+        uint32_t icon_color = 0;
+        get_file_visuals(file->name, file->is_directory, &icon, &icon_color);
         vita2d_pgf_draw_textf(font, 10, y + 16, icon_color, 0.8f, "%s", icon);
         
         uint32_t text_color = (idx == browser.selected_index) ? RGBA8(255, 255, 255, 255) : RGBA8(201, 209, 217, 255);
@@ -154,8 +228,9 @@ void draw_browser() {
             vita2d_pgf_draw_textf(font, 600, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", size_buf);
         }
         
-        const char *type = file->is_directory ? "Folder" : "File";
-        vita2d_pgf_draw_textf(font, 800, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", type);
+        const char *type = get_file_type_label(file->name, file->is_directory);
+        uint32_t type_color = (idx == browser.selected_index) ? RGBA8(255, 255, 255, 255) : icon_color;
+        vita2d_pgf_draw_textf(font, 800, y + 16, type_color, 0.8f, "%s", type);
     }
 }
 
@@ -187,7 +262,7 @@ void draw_browser_footer() {
         snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SELECT_ENTER));
         snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
         snprintf(tri_str, sizeof(tri_str), "TRIANGLE: %s", language_get(&lang, STR_CREATE_ZIP));
-        snprintf(sel_str, sizeof(sel_str), "SELECT: %s", language_get(&lang, STR_SETTINGS));
+        snprintf(sel_str, sizeof(sel_str), "SELECT: %s", language_get(&lang, STR_LANGUAGE));
         snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
 
         const char *actions[] = {x_str, o_str, tri_str, sel_str, start_str};
@@ -225,10 +300,10 @@ void draw_archive_view() {
     
     int header_y = 85;
     vita2d_draw_rectangle(0, header_y, 960, 25, RGBA8(33, 38, 45, 255));
-    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Name");
-    vita2d_pgf_draw_textf(font, 500, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Size");
-    vita2d_pgf_draw_textf(font, 650, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Compressed");
-    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "Type");
+    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_NAME));
+    vita2d_pgf_draw_textf(font, 500, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_SIZE));
+    vita2d_pgf_draw_textf(font, 650, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_COMPRESSED));
+    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_TYPE));
     int start_y = 110;
     int line_height = 22;
     int visible_files = (510 - start_y) / line_height;
@@ -246,8 +321,9 @@ void draw_archive_view() {
             vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(22, 27, 34, 255));
         }
         
-        const char *icon = file->is_directory ? "[DIR]" : (is_vpk_file(file->filename) ? "[VPK]" : "[FILE]");
-        uint32_t icon_color = file->is_directory ? RGBA8(241, 196, 15, 255) : (is_vpk_file(file->filename) ? RGBA8(46, 204, 113, 255) : RGBA8(110, 118, 129, 255));
+        const char *icon = NULL;
+        uint32_t icon_color = 0;
+        get_file_visuals(file->filename, file->is_directory, &icon, &icon_color);
         vita2d_pgf_draw_textf(font, 10, y + 16, icon_color, 0.8f, "%s", icon);
         
         uint32_t text_color = (idx == archive_selected) ? RGBA8(255, 255, 255, 255) : RGBA8(201, 209, 217, 255);
@@ -261,15 +337,20 @@ void draw_archive_view() {
             vita2d_pgf_draw_textf(font, 650, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", size_buf);
         }
         
-        const char *type = file->is_directory ? "Folder" : "File";
-        vita2d_pgf_draw_textf(font, 800, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", type);
+        const char *type = get_file_type_label(file->filename, file->is_directory);
+        uint32_t type_color = (idx == archive_selected) ? RGBA8(255, 255, 255, 255) : icon_color;
+        vita2d_pgf_draw_textf(font, 800, y + 16, type_color, 0.8f, "%s", type);
     }
-    char x_str[64], o_str[64], tri_str[64], start_str[64];
+    char x_str[64], sq_str[64], o_str[64], tri_str[64], start_str[64];
     int vpk_selected = archive_info.file_count > 0 &&
         is_vpk_file(archive_info.files[archive_selected].filename);
+    int smart_install_available = !vpk_selected && archive_can_smart_install(&archive_info);
 
     if (vpk_selected) {
         snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_PRESS_X_INSTALL_VPK));
+    } else if (smart_install_available) {
+        snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SMART_INSTALL));
+        snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_EXTRACT_ALL));
     } else {
         snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_EXTRACT_ALL));
     }
@@ -277,8 +358,13 @@ void draw_archive_view() {
     snprintf(tri_str, sizeof(tri_str), "TRIANGLE: %s", language_get(&lang, STR_INFO));
     snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
 
-    const char *actions[] = {x_str, o_str, tri_str, start_str};
-    draw_footer(actions, 4);
+    if (smart_install_available) {
+        const char *actions[] = {x_str, sq_str, o_str, tri_str, start_str};
+        draw_footer(actions, 5);
+    } else {
+        const char *actions[] = {x_str, o_str, tri_str, start_str};
+        draw_footer(actions, 4);
+    }
 }
 
 void draw_extracting() {
@@ -297,7 +383,9 @@ void draw_extracting() {
     int filled_width = (720 * extract_progress) / 100;
     vita2d_draw_rectangle(120, panel_y + 80, filled_width, 40, RGBA8(31, 111, 235, 255));
     
-    const char *status = extract_progress < 100 ? "Extracting files..." : "Complete!";
+    const char *status = extract_progress < 100
+        ? language_get(&lang, STR_EXTRACTING_FILES)
+        : language_get(&lang, STR_COMPLETE);
     vita2d_pgf_draw_textf(font, 120, panel_y + 140, RGBA8(139, 148, 158, 255), 0.9f, "%s", status);
     
     char sq_str[64], start_str[64];
@@ -309,8 +397,11 @@ void draw_extracting() {
 
 void draw_installing(int success) {
     vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
+    const char *install_title = current_install_mode == INSTALL_MODE_APP
+        ? language_get(&lang, STR_INSTALL_APP)
+        : language_get(&lang, STR_INSTALL_VPK);
     vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s",
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_INSTALL_VPK));
+        language_get(&lang, STR_APP_TITLE), install_title);
 
     int panel_y = 150;
     vita2d_draw_rectangle(100, panel_y, 760, 200, RGBA8(22, 27, 34, 255));
@@ -325,11 +416,15 @@ void draw_installing(int success) {
         vita2d_draw_rectangle(120, panel_y + 80, filled_width, 40, RGBA8(31, 111, 235, 255));
 
         vita2d_pgf_draw_textf(font, 120, panel_y + 140, RGBA8(139, 148, 158, 255), 0.9f, "%s",
-            language_get(&lang, STR_VPK_INSTALLING));
+            install_title);
     } else {
         const char *result = success
-            ? language_get(&lang, STR_VPK_INSTALL_COMPLETE)
-            : language_get(&lang, STR_VPK_INSTALL_ERROR);
+            ? (current_install_mode == INSTALL_MODE_APP
+                ? language_get(&lang, STR_APP_INSTALL_COMPLETE)
+                : language_get(&lang, STR_VPK_INSTALL_COMPLETE))
+            : (current_install_mode == INSTALL_MODE_APP
+                ? language_get(&lang, STR_APP_INSTALL_ERROR)
+                : language_get(&lang, STR_VPK_INSTALL_ERROR));
         uint32_t color = success ? RGBA8(46, 204, 113, 255) : RGBA8(231, 76, 60, 255);
         vita2d_pgf_draw_textf(font, 120, panel_y + 100, color, 1.0f, "%s", result);
     }
@@ -338,6 +433,28 @@ void draw_installing(int success) {
     snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
     const char *actions[] = {start_str};
     draw_footer(actions, 1);
+}
+
+void draw_smart_install_confirm() {
+    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
+    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s",
+        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_SMART_INSTALL));
+
+    int panel_y = 150;
+    vita2d_draw_rectangle(100, panel_y, 760, 200, RGBA8(22, 27, 34, 255));
+    vita2d_draw_rectangle(100, panel_y, 760, 1, RGBA8(31, 111, 235, 255));
+
+    vita2d_pgf_draw_textf(font, 120, panel_y + 60, RGBA8(240, 246, 252, 255), 0.9f, "%s",
+        language_get(&lang, STR_SMART_INSTALL_DETECTED));
+    vita2d_pgf_draw_textf(font, 120, panel_y + 110, RGBA8(201, 209, 217, 255), 0.9f, "%s",
+        language_get(&lang, STR_SMART_INSTALL_PROMPT));
+
+    char x_str[64], sq_str[64], o_str[64];
+    snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_INSTALL_APP));
+    snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_EXTRACT_ALL));
+    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
+    const char *actions[] = {x_str, sq_str, o_str};
+    draw_footer(actions, 3);
 }
 
 void draw_info() {
@@ -388,7 +505,7 @@ void draw_info() {
 void draw_settings() {
     vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
     vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", 
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_SETTINGS));
+        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_LANGUAGE));
 
     int start_y = 110;
     int line_height = 40;
@@ -478,7 +595,9 @@ static int get_ime_input(char *output, int max_len, const char *title) {
 
 void archive_close_custom(ArchiveInfo *info) {
     if (!info || !info->is_open) return;
-    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path)) {
+    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path) ||
+        is_tar_file(info->archive_path) || is_gzip_file(info->archive_path) ||
+        is_bzip2_file(info->archive_path)) {
         zip_close(info);
     } else if (is_rar_file(info->archive_path)) {
         rar_close(info);
@@ -489,7 +608,9 @@ void archive_close_custom(ArchiveInfo *info) {
 
 void archive_cancel_custom(ArchiveInfo *info) {
     if (!info || !info->is_open) return;
-    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path)) {
+    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path) ||
+        is_tar_file(info->archive_path) || is_gzip_file(info->archive_path) ||
+        is_bzip2_file(info->archive_path)) {
         zip_cancel(info);
     } else if (is_rar_file(info->archive_path)) {
         rar_cancel(info);
@@ -500,7 +621,9 @@ void archive_cancel_custom(ArchiveInfo *info) {
 
 int archive_extract_all_custom(const char *dest, ArchiveInfo *info, int *progress) {
     if (!info || !info->is_open) return -1;
-    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path)) {
+    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path) ||
+        is_tar_file(info->archive_path) || is_gzip_file(info->archive_path) ||
+        is_bzip2_file(info->archive_path)) {
         return zip_extract_all(dest, info, progress);
     } else if (is_rar_file(info->archive_path)) {
         return rar_extract_all(dest, info, progress);
@@ -550,7 +673,9 @@ int main() {
                         const char *selected = filebrowser_get_selected_path(&browser);
                         if (selected) {
                             int open_res = -1;
-                            if (is_zip_file(selected) || is_vpk_file(selected)) {
+                            if (is_zip_file(selected) || is_vpk_file(selected) ||
+                                is_tar_file(selected) || is_gzip_file(selected) ||
+                                is_bzip2_file(selected)) {
                                 open_res = zip_open(selected, &archive_info);
                             } else if (is_rar_file(selected)) {
                                 open_res = rar_open(selected, &archive_info);
@@ -582,6 +707,10 @@ int main() {
                 break;
                 
             case MODE_ARCHIVE_VIEW:
+                {
+                int vpk_selected = archive_info.file_count > 0 &&
+                    is_vpk_file(archive_info.files[archive_selected].filename);
+                int smart_install_available = !vpk_selected && archive_can_smart_install(&archive_info);
                 if (pressed & SCE_CTRL_UP) {
                     if (archive_selected > 0) {
                         archive_selected--;
@@ -591,10 +720,12 @@ int main() {
                         archive_selected++;
                     }
                 } else if (pressed & SCE_CTRL_CROSS) {
-                    if (archive_info.file_count > 0 &&
-                        is_vpk_file(archive_info.files[archive_selected].filename)) {
+                    if (vpk_selected) {
                         current_mode = MODE_INSTALLING;
+                        current_install_mode = INSTALL_MODE_VPK;
                         extract_progress = 0;
+                    } else if (smart_install_available) {
+                        current_mode = MODE_SMART_INSTALL_CONFIRM;
                     } else {
                         current_mode = MODE_DEST_BROWSER;
                         filebrowser_init(&browser, "ux0:/");
@@ -604,7 +735,13 @@ int main() {
                     archive_close_custom(&archive_info);
                     current_mode = MODE_BROWSER;
                 } else if (pressed & SCE_CTRL_SQUARE) {
-                    archive_cancel_custom(&archive_info);
+                    if (smart_install_available) {
+                        current_mode = MODE_DEST_BROWSER;
+                        filebrowser_init(&browser, "ux0:/");
+                        scroll_offset = 0;
+                    } else {
+                        archive_cancel_custom(&archive_info);
+                    }
                 } else if (pressed & SCE_CTRL_TRIANGLE) {
                     current_mode = MODE_INFO;
                 }
@@ -615,6 +752,7 @@ int main() {
                 }
                 if (archive_selected >= archive_scroll + visible_archive_files) {
                     archive_scroll = archive_selected - visible_archive_files + 1;
+                }
                 }
                 break;
                 
@@ -641,7 +779,9 @@ int main() {
 
                 if (!installing && install_done_frames == 0) {
                     installing = 1;
-                    int res = vpk_install_from_zip(&archive_info, archive_selected, &extract_progress);
+                    int res = current_install_mode == INSTALL_MODE_APP
+                        ? vpk_install_homebrew_from_archive(&archive_info, &extract_progress)
+                        : vpk_install_from_zip(&archive_info, archive_selected, &extract_progress);
                     install_success = (res == 0);
                     if (extract_progress < 100) {
                         extract_progress = 100;
@@ -656,6 +796,20 @@ int main() {
                 }
                 break;
             }
+
+            case MODE_SMART_INSTALL_CONFIRM:
+                if (pressed & SCE_CTRL_CROSS) {
+                    current_mode = MODE_INSTALLING;
+                    current_install_mode = INSTALL_MODE_APP;
+                    extract_progress = 0;
+                } else if (pressed & SCE_CTRL_SQUARE) {
+                    current_mode = MODE_DEST_BROWSER;
+                    filebrowser_init(&browser, "ux0:/");
+                    scroll_offset = 0;
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_ARCHIVE_VIEW;
+                }
+                break;
 
             case MODE_INFO:
                 if (pressed & SCE_CTRL_CIRCLE) {
@@ -765,6 +919,9 @@ int main() {
             case MODE_ZIP_CREATION:
                 draw_browser();
                 draw_browser_footer();
+                break;
+            case MODE_SMART_INSTALL_CONFIRM:
+                draw_smart_install_confirm();
                 break;
         }
         

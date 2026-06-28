@@ -10,6 +10,16 @@ int sceIoMkdir(const char *path, int mode);
 
 static struct archive *zip_archive = NULL;
 
+static int ends_with_ignore_case(const char *str, const char *suffix) {
+    if (!str || !suffix) return 0;
+
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > str_len) return 0;
+
+    return strcasecmp(str + str_len - suffix_len, suffix) == 0;
+}
+
 static int open_archive_reader(const char *path) {
     if (zip_archive) {
         archive_read_free(zip_archive);
@@ -277,16 +287,30 @@ void zip_close(ArchiveInfo *info) {
 }
 
 int is_zip_file(const char *path) {
-    const char *ext = strrchr(path, '.');
-    return ext && strcasecmp(ext, ".zip") == 0;
+    return ends_with_ignore_case(path, ".zip");
 }
 
 int is_rar_file(const char *path) {
-    const char *ext = strrchr(path, '.');
-    return ext && strcasecmp(ext, ".rar") == 0;
+    return ends_with_ignore_case(path, ".rar");
 }
 
 int is_7z_file(const char *path) {
-    const char *ext = strrchr(path, '.');
-    return ext && strcasecmp(ext, ".7z") == 0;
+    return ends_with_ignore_case(path, ".7z");
+}
+
+int is_tar_file(const char *path) {
+    return ends_with_ignore_case(path, ".tar");
+}
+
+int is_gzip_file(const char *path) {
+    return ends_with_ignore_case(path, ".gz") ||
+           ends_with_ignore_case(path, ".tgz") ||
+           ends_with_ignore_case(path, ".tar.gz");
+}
+
+int is_bzip2_file(const char *path) {
+    return ends_with_ignore_case(path, ".bz2") ||
+           ends_with_ignore_case(path, ".tbz") ||
+           ends_with_ignore_case(path, ".tbz2") ||
+           ends_with_ignore_case(path, ".tar.bz2");
 }

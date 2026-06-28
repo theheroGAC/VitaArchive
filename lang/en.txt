@@ -32,3 +32,27 @@ Install VPK
 VPK installed successfully
 VPK install failed
 Install VPK
+Settings
+Language
+Select Destination Folder
+Confirm Destination
+Create ZIP
+Select/Deselect
+Extract File
+Delete ZIP
+Delete
+Delete the selected ZIP file?
+Enter ZIP password
+Name
+Type
+Folder
+File
+Compressed
+Extracting files...
+Complete!
+Smart Install
+`eboot.bin` detected in this archive.
+Install this archive as a PSVita application?
+Installing Application
+Application installed successfully
+Application install failed

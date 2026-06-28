@@ -8,7 +8,7 @@ Größe
 Extrahieren
 Fortschritt
 Archivinfo
-Gesamt Dateien
+Gesamtdateien
 Unkomprimierte Größe
 Komprimierte Größe
 Komprimierungsrate
@@ -17,18 +17,37 @@ Auswählen/Eingeben
 Zurück
 Info
 Beenden
-Alles Extrahieren
+Alles extrahieren
 Abbrechen
-Extraktion Abbrechen
+Extraktion abbrechen
 Drücke X zum Extrahieren
 RAR-Unterstützung benötigt libunrar
 7z-Unterstützung benötigt LZMA SDK
-VPK Installation
-Extraktion Abgeschlossen
-Extraktion Abgebrochen
+VPK-Installation
+Extraktion abgeschlossen
+Extraktion abgebrochen
 Fehler beim Öffnen des Archivs
 Fehler beim Extrahieren
 VPK installieren
 VPK erfolgreich installiert
 VPK-Installation fehlgeschlagen
 VPK installieren
+Einstellungen
+Sprache
+Zielordner auswählen
+Ziel bestätigen
+ZIP erstellen
+Auswählen/Abwählen
+Name
+Typ
+Ordner
+Datei
+Komprimiert
+Dateien werden extrahiert...
+Fertig!
+Smart Install
+`eboot.bin` in diesem Archiv erkannt.
+Dieses Archiv als PSVita-Anwendung installieren?
+Anwendung wird installiert
+Anwendung erfolgreich installiert
+Installation der Anwendung fehlgeschlagen
