@@ -1,0 +1,38 @@
+VitaArchive
+Browser File
+Percorso
+Contenuti Archivio
+Contenuti Archivio
+File
+Dimensione
+Estrazione
+Progresso
+Info Archivio
+Totale File
+Dimensione Non Compressa
+Dimensione Compressa
+Rapporto Compressione
+[DIR]
+Seleziona/Entra
+Indietro
+Info
+Esci
+Estra Tutto
+Annulla
+Annulla Estrazione
+Premi X per estrarre
+Supporto RAR richiede libunrar
+Supporto 7z richiede LZMA SDK
+Installazione VPK
+Estrazione Completata
+Estrazione Annullata
+Errore apertura archivio
+Errore estrazione
+Installa VPK
+VPK installato con successo
+Installazione VPK fallita
+Installa VPK
+Seleziona Cartella di Destinazione
+Conferma Destinazione
+Crea ZIP
+Seleziona/Deseleziona

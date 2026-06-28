@@ -1,0 +1,34 @@
+VitaArchive
+Navigateur de Fichiers
+Chemin
+Contenu de l'Archive
+Contenu de l'Archive
+Fichiers
+Taille
+Extraction
+Progression
+Info Archive
+Total Fichiers
+Taille Non Compressée
+Taille Compressée
+Taux de Compression
+[DIR]
+Sélectionner/Entrer
+Retour
+Info
+Quitter
+Extraire Tout
+Annuler
+Annuler Extraction
+Appuyez sur X pour extraire
+Support RAR nécessite libunrar
+Support 7z nécessite LZMA SDK
+Installation VPK
+Extraction Terminée
+Extraction Annulée
+Erreur ouverture archive
+Erreur extraction
+Installer VPK
+VPK installé avec succès
+Échec installation VPK
+Installer VPK

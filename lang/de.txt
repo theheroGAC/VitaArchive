@@ -1,0 +1,34 @@
+VitaArchive
+Dateibrowser
+Pfad
+Archivinhalt
+Archivinhalt
+Dateien
+Größe
+Extrahieren
+Fortschritt
+Archivinfo
+Gesamt Dateien
+Unkomprimierte Größe
+Komprimierte Größe
+Komprimierungsrate
+[DIR]
+Auswählen/Eingeben
+Zurück
+Info
+Beenden
+Alles Extrahieren
+Abbrechen
+Extraktion Abbrechen
+Drücke X zum Extrahieren
+RAR-Unterstützung benötigt libunrar
+7z-Unterstützung benötigt LZMA SDK
+VPK Installation
+Extraktion Abgeschlossen
+Extraktion Abgebrochen
+Fehler beim Öffnen des Archivs
+Fehler beim Extrahieren
+VPK installieren
+VPK erfolgreich installiert
+VPK-Installation fehlgeschlagen
+VPK installieren

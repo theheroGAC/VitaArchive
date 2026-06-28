@@ -1,0 +1,34 @@
+VitaArchive
+File Browser
+Path
+Archive Contents
+Archive Contents
+Files
+Size
+Extracting
+Progress
+Archive Info
+Total Files
+Uncompressed Size
+Compressed Size
+Compression Ratio
+[DIR]
+Select/Enter
+Back
+Info
+Exit
+Extract All
+Cancel
+Cancel Extraction
+Press X to extract
+RAR support requires libunrar
+7z support requires LZMA SDK
+Installing VPK
+Extract Complete
+Extract Cancelled
+Error opening archive
+Error extracting
+Install VPK
+VPK installed successfully
+VPK install failed
+Install VPK

@@ -1,0 +1,39 @@
+VitaArchive
+Explorador de Archivos
+Ruta
+Contenido del Archivo
+Contenido del Archivo
+Archivos
+Tamaño
+Extrayendo
+Progreso
+Info del Archivo
+Total de Archivos
+Tamaño Sin Comprimir
+Tamaño Comprimido
+Ratio de Compresión
+[DIR]
+Seleccionar/Entrar
+Atrás
+Info
+Salir
+Extraer Todo
+Cancelar
+Cancelar Extracción
+Presiona X para extraer
+Soporte RAR requiere libunrar
+Soporte 7z requiere LZMA SDK
+Instalando VPK
+Extracción Completada
+Extracción Cancelada
+Error al abrir archivo
+Error al extraer
+Instalar VPK
+VPK instalado correctamente
+Error al instalar VPK
+Instalar VPK
+Ajustes
+Seleccionar Carpeta de Destino
+Confirmar Destino
+Crear ZIP
+Seleccionar/Deseleccionar
