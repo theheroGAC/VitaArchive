@@ -1,3 +1,9 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <psp2/io/fcntl.h>
@@ -24,10 +30,10 @@ static const char *lang_codes[] = {
 static const char *lang_names[] = {
     "Italiano",
     "English",
-    "Español",
-    "Français",
+    "Espanol",
+    "Francais",
     "Deutsch",
-    "日本語"
+    "Nihongo"
 };
 
 static void language_set_english_defaults(Language *lang) {
@@ -89,6 +95,30 @@ static void language_set_english_defaults(Language *lang) {
     strcpy(lang->strings[STR_INSTALL_APP], "Installing Application");
     strcpy(lang->strings[STR_APP_INSTALL_COMPLETE], "Application installed successfully");
     strcpy(lang->strings[STR_APP_INSTALL_ERROR], "Application install failed");
+    strcpy(lang->strings[STR_ACTIONS], "Actions");
+    strcpy(lang->strings[STR_COPY], "Copy");
+    strcpy(lang->strings[STR_CUT], "Cut");
+    strcpy(lang->strings[STR_PASTE], "Paste");
+    strcpy(lang->strings[STR_RENAME], "Rename");
+    strcpy(lang->strings[STR_NEW_FOLDER], "New Folder");
+    strcpy(lang->strings[STR_SEARCH], "Search");
+    strcpy(lang->strings[STR_SELECT_MULTIPLE], "Create Archive (ZIP/7z/...)");
+    strcpy(lang->strings[STR_TEST_INTEGRITY], "Test Integrity");
+    strcpy(lang->strings[STR_EXTRACT_SELECTED], "Extract Selected");
+    strcpy(lang->strings[STR_TOAST_COPIED], "Copied to clipboard!");
+    strcpy(lang->strings[STR_TOAST_CUT], "Cut to clipboard!");
+    strcpy(lang->strings[STR_TOAST_PASTE_SUCCESS], "Operation completed!");
+    strcpy(lang->strings[STR_TOAST_PASTE_FAIL], "Operation failed");
+    strcpy(lang->strings[STR_TOAST_RENAME_SUCCESS], "Renamed successfully!");
+    strcpy(lang->strings[STR_TOAST_RENAME_FAIL], "Rename failed");
+    strcpy(lang->strings[STR_TOAST_FOLDER_SUCCESS], "Folder created!");
+    strcpy(lang->strings[STR_TOAST_FOLDER_FAIL], "Folder creation failed");
+    strcpy(lang->strings[STR_INTEGRITY_PASSED], "Integrity test passed!");
+    strcpy(lang->strings[STR_INTEGRITY_FAILED], "Integrity test failed!");
+    strcpy(lang->strings[STR_INTEGRITY_INTACT], "The archive is intact and contains no errors.");
+    strcpy(lang->strings[STR_INTEGRITY_CORRUPT], "The archive is corrupted or incomplete.");
+    strcpy(lang->strings[STR_ENTER_PASSWORD], "Enter Archive Password");
+    strcpy(lang->strings[STR_CANNOT_OPEN], "Cannot open archive");
 }
 
 int language_init(Language *lang) {

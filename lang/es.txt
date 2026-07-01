@@ -38,6 +38,11 @@ Seleccionar carpeta de destino
 Confirmar destino
 Crear ZIP
 Seleccionar/Deseleccionar
+Extraer archivo
+Eliminar ZIP
+Eliminar
+¿Eliminar el archivo ZIP seleccionado?
+Introducir contrasena de ZIP
 Nombre
 Tipo
 Carpeta
@@ -51,3 +56,27 @@ Se detectó `eboot.bin` en este archivo.
 Instalando aplicación
 Aplicación instalada correctamente
 La instalación de la aplicación falló
+Acciones
+Copiar
+Cortar
+Pegar
+Renombrar
+Nueva Carpeta
+Buscar
+Crear Archivo (ZIP/7z/...)
+Probar Integridad
+Extraer Seleccionado
+Copiado al portapapeles!
+Cortado al portapapeles!
+Operacion completada!
+Operacion fallida
+Renombrado con exito!
+Error al renombrar
+Carpeta creada!
+Error al crear la carpeta
+Prueba de integridad superada!
+Prueba de integridad fallida!
+El archivo esta intacto y no contiene errores.
+El archivo esta corrompido o incompleto.
+Introducir Contrasena
+No se puede abrir el archivo

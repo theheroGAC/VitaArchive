@@ -1,3 +1,9 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
 #ifndef LANGUAGE_H
 #define LANGUAGE_H
 
@@ -74,6 +80,30 @@ typedef enum {
     STR_INSTALL_APP,
     STR_APP_INSTALL_COMPLETE,
     STR_APP_INSTALL_ERROR,
+    STR_ACTIONS,
+    STR_COPY,
+    STR_CUT,
+    STR_PASTE,
+    STR_RENAME,
+    STR_NEW_FOLDER,
+    STR_SEARCH,
+    STR_SELECT_MULTIPLE,
+    STR_TEST_INTEGRITY,
+    STR_EXTRACT_SELECTED,
+    STR_TOAST_COPIED,
+    STR_TOAST_CUT,
+    STR_TOAST_PASTE_SUCCESS,
+    STR_TOAST_PASTE_FAIL,
+    STR_TOAST_RENAME_SUCCESS,
+    STR_TOAST_RENAME_FAIL,
+    STR_TOAST_FOLDER_SUCCESS,
+    STR_TOAST_FOLDER_FAIL,
+    STR_INTEGRITY_PASSED,
+    STR_INTEGRITY_FAILED,
+    STR_INTEGRITY_INTACT,
+    STR_INTEGRITY_CORRUPT,
+    STR_ENTER_PASSWORD,
+    STR_CANNOT_OPEN,
     STR_COUNT
 } StringId;
 

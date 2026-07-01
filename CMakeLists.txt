@@ -38,6 +38,12 @@ add_executable(${PROJECT_NAME}
   rar.c
   archive7z.c
   language.c
+  psarc.c
+  ftp.c
+  gui.c
+  settings.c
+  clipboard.c
+  hash.c
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -50,10 +56,15 @@ target_link_libraries(${PROJECT_NAME}
   SceGxm_stub
   SceCommonDialog_stub
   ScePromoterUtil_stub
+  ScePower_stub
+  SceNet_stub
+  SceNetctl_stub
   SceSysmodule_stub
   SceIme_stub
   ScePgf_stub
+  SceFios2_stub
   archive
+  ftpvita
   freetype
   png
   lzma

@@ -1,10 +1,15 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
 #ifndef RAR_H
 #define RAR_H
 
 #include "zip.h"
 
-// RAR support using libunrar
-// Note: Requires libunrar library to be linked
+
 
 int rar_open(const char *rar_path, ArchiveInfo *info);
 int rar_list_files(ArchiveInfo *info);

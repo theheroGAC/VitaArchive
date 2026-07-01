@@ -1,13 +1,36 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <psp2/io/stat.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
+#include <ctype.h>
 #include "filebrowser.h"
+
+static char *stristr(const char *str1, const char *str2) {
+    if (!str1 || !str2) return NULL;
+    while (*str1) {
+        const char *h = str1;
+        const char *n = str2;
+        while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) {
+            h++;
+            n++;
+        }
+        if (!*n) return (char *)str1;
+        str1++;
+    }
+    return NULL;
+}
 
 int filebrowser_init(FileBrowser *fb, const char *start_path) {
     memset(fb, 0, sizeof(FileBrowser));
     memset(fb->selection_mask, 0, sizeof(fb->selection_mask));
+    fb->search_query[0] = '\0';
     strncpy(fb->current_path, start_path, MAX_PATH - 1);
     fb->selected_index = 0;
     return filebrowser_refresh(fb);
@@ -45,6 +68,7 @@ int filebrowser_refresh(FileBrowser *fb) {
     SceIoDirent dir;
     while (sceIoDread(dfd, &dir) > 0 && fb->file_count < MAX_FILES) {
         if (strcmp(dir.d_name, ".") == 0 || strcmp(dir.d_name, "..") == 0) continue;
+        if (fb->search_query[0] && !stristr(dir.d_name, fb->search_query)) continue;
         
         strncpy(fb->files[fb->file_count].name, dir.d_name, 255);
         fb->files[fb->file_count].is_directory = SCE_S_ISDIR(dir.d_stat.st_mode);
@@ -75,12 +99,19 @@ int filebrowser_refresh(FileBrowser *fb) {
 }
 
 void filebrowser_navigate_up(FileBrowser *fb) {
-    if (fb->selected_index > 0) fb->selected_index--;
+    if (fb->selected_index > 0) {
+        fb->selected_index--;
+    } else if (fb->file_count > 0) {
+        fb->selected_index = fb->file_count - 1;
+    }
 }
 
 int filebrowser_navigate_down(FileBrowser *fb) {
     if (fb->selected_index < fb->file_count - 1) {
         fb->selected_index++;
+        return 1;
+    } else if (fb->file_count > 0) {
+        fb->selected_index = 0;
         return 1;
     }
     return 0;

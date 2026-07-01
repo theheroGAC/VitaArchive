@@ -1,10 +1,15 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
 #ifndef ARCHIVE7Z_H
 #define ARCHIVE7Z_H
 
 #include "zip.h"
 
-// 7z support using LZMA SDK
-// Note: Requires LZMA SDK library to be linked
+
 
 int archive7z_open(const char *archive_path, ArchiveInfo *info);
 int archive7z_list_files(ArchiveInfo *info);

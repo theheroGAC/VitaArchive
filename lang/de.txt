@@ -38,6 +38,11 @@ Zielordner auswählen
 Ziel bestätigen
 ZIP erstellen
 Auswählen/Abwählen
+Datei extrahieren
+ZIP loeschen
+Loeschen
+Ausgewaehlte ZIP-Datei loeschen?
+ZIP-Passwort eingeben
 Name
 Typ
 Ordner
@@ -51,3 +56,27 @@ Dieses Archiv als PSVita-Anwendung installieren?
 Anwendung wird installiert
 Anwendung erfolgreich installiert
 Installation der Anwendung fehlgeschlagen
+Aktionen
+Kopieren
+Ausschneiden
+Einfuegen
+Umbenennen
+Neuer Ordner
+Suchen
+Archiv erstellen (ZIP/7z/...)
+Integritaet pruefen
+Auswahl entpacken
+In Zwischenablage kopiert!
+In Zwischenablage ausgeschnitten!
+Vorgang abgeschlossen!
+Vorgang fehlgeschlagen
+Erfolgreich umbenannt!
+Fehler beim Umbenennen
+Ordner erstellt!
+Fehler beim Erstellen des Ordners
+Integritaetspruefung erfolgreich!
+Integritaetspruefung fehlgeschlagen!
+Das Archiv ist intakt und enthaelt keine Fehler.
+Das Archiv ist beschaedigt oder unvollstaendig.
+Archiv-Passwort eingeben
+Archiv kann nicht geoeffnet werden

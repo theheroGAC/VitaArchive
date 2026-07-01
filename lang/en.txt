@@ -56,3 +56,27 @@ Install this archive as a PSVita application?
 Installing Application
 Application installed successfully
 Application install failed
+Actions
+Copy
+Cut
+Paste
+Rename
+New Folder
+Search
+Create Archive (ZIP/7z/...)
+Test Integrity
+Extract Selected
+Copied to clipboard!
+Cut to clipboard!
+Operation completed!
+Operation failed
+Renamed successfully!
+Rename failed
+Folder created!
+Folder creation failed
+Integrity test passed!
+Integrity test failed!
+The archive is intact and contains no errors.
+The archive is corrupted or incomplete.
+Enter Archive Password
+Cannot open archive

@@ -1,15 +1,70 @@
+/*
+ * VitaArchive - File Archiver & Browser for PS Vita
+ * Created by theheroGAC.
+ * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
+ * and contributors of the PlayStation Vita homebrew scene.
+ */
+
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/power.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
 #include <psp2/sysmodule.h>
 #include <psp2/common_dialog.h>
 #include <psp2/ime_dialog.h>
+#include <psp2/io/devctl.h>
 
 #include <vita2d.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <psp2/sysmodule.h>
+#include <psp2/promoterutil.h>
+
+#include <sys/types.h>
+#include <errno.h>
+#include <sys/statvfs.h>
+
+#include "globals.h"
+#include "gui.h"
+#include "settings.h"
+#include "clipboard.h"
+#include "hash.h"
+
+pid_t waitpid(pid_t pid, int *status, int options) {
+    errno = ENOSYS;
+    return -1;
+}
+
+int dup2(int oldfd, int newfd) {
+    errno = ENOSYS;
+    return -1;
+}
+
+int execvp(const char *file, char *const argv[]) {
+    errno = ENOSYS;
+    return -1;
+}
+
+static void load_sce_paf() {
+    uint32_t args[] = {
+        0x00400000,
+        0x0000ea60,
+        0x00040000,
+        0x00000000,
+        0x00000001,
+        0x00000000,
+    };
+
+    int result = 0xDEADBEEF;
+
+    SceSysmoduleOpt opt = {0};
+    opt.result = &result;
+
+    sceSysmoduleLoadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, sizeof(args), args, &opt);
+}
 
 static void utf8_to_utf16(uint16_t *dst, uint32_t dst_max_chars, const uint8_t *src) {
     uint32_t i = 0;
@@ -60,502 +115,261 @@ static void utf16_to_utf8(uint8_t *dst, uint32_t dst_max_bytes, const uint16_t *
 #include "rar.h"
 #include "archive7z.h"
 #include "vpk.h"
+#include "psarc.h"
+#include "ftp.h"
 
 
-typedef enum {
-    MODE_BROWSER,
-    MODE_ARCHIVE_VIEW,
-    MODE_EXTRACTING,
-    MODE_INSTALLING,
-    MODE_INFO,
-    MODE_SETTINGS,
-    MODE_DEST_BROWSER,
-    MODE_ZIP_CREATION,
-    MODE_SMART_INSTALL_CONFIRM
-} AppMode;
+#define SFO_MAGIC 0x46535000
 
-typedef enum {
-    INSTALL_MODE_VPK,
-    INSTALL_MODE_APP
-} InstallMode;
+typedef struct SfoHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t keyofs;
+    uint32_t valofs;
+    uint32_t count;
+} __attribute__((packed)) SfoHeader;
 
-static AppMode current_mode = MODE_BROWSER;
-static FileBrowser browser;
-static ArchiveInfo archive_info;
-static int extract_progress = 0;
-static int scroll_offset = 0;
-static int archive_scroll = 0;
-static int archive_selected = 0;
-static int install_success = 0;
-static Language lang;
-static vita2d_pgf *font = NULL;
-static int settings_selected = 0;
-static char extraction_dest_path[MAX_PATH];
-static InstallMode current_install_mode = INSTALL_MODE_VPK;
+typedef struct SfoEntry {
+    uint16_t nameofs;
+    uint8_t  alignment;
+    uint8_t  type;
+    uint32_t valsize;
+    uint32_t totalsize;
+    uint32_t dataofs;
+} __attribute__((packed)) SfoEntry;
 
-void save_settings();
-void load_settings();
+AppMode current_mode = MODE_BROWSER;
+FileBrowser browser;
+ArchiveInfo archive_info;
+int extract_progress = 0;
+int scroll_offset = 0;
+int archive_scroll = 0;
 
-static int archive_can_smart_install(const ArchiveInfo *info) {
-    return info && info->is_open && is_zip_file(info->archive_path) && archive_contains_homebrew(info);
+char preview_lines[MAX_PREVIEW_LINES][MAX_PREVIEW_LINE_LEN];
+int preview_line_count = 0;
+int preview_scroll = 0;
+char preview_filename[256] = {0};
+int archive_selected = 0;
+
+char archive_stack[MAX_ARCHIVE_STACK][MAX_PATH];
+int archive_stack_selected[MAX_ARCHIVE_STACK];
+int archive_stack_depth = 0;
+int install_success = 0;
+Language lang;
+vita2d_pgf *font = NULL;
+int settings_selected = 0;
+int compress_level = 1; 
+int settings_item_selected = 0; 
+int compress_format_selected = 0;
+char extraction_dest_path[MAX_PATH];
+InstallMode current_install_mode = INSTALL_MODE_VPK;
+static int get_ime_input(char *output, int max_len, const char *title, const char *initial_text);
+int extract_selected_only = 0;
+int extract_file_index = -1;
+
+char clipboard_paths[CLIPBOARD_MAX_FILES][1024];
+int clipboard_file_count = 0;
+int clipboard_is_move = 0;
+
+int archive_selection_mask[512] = {0};
+int actions_menu_selected = 0;
+int archive_actions_selected = 0;
+
+uint64_t worker_processed_bytes = 0;
+uint64_t worker_total_bytes = 0;
+uint64_t worker_start_time = 0;
+
+SceUID worker_thread_id = -1;
+int worker_running = 0;
+int worker_result = 0;
+WorkerArgs worker_args;
+
+char toast_msg[160] = {0};
+uint64_t toast_expire = 0;
+uint32_t toast_color = 0;
+
+char ftp_ip[32] = {0};
+unsigned short ftp_port = 0;
+
+
+uint32_t hex_offset = 0;
+uint64_t hex_file_size = 0;
+char hex_filepath[1024] = {0};
+
+
+char hash_md5[33] = {0};
+char hash_sha256[65] = {0};
+char hash_filepath[1024] = {0};
+volatile int hash_progress = 0;
+volatile int hash_cancel = 0;
+
+
+char prop_filepath[1024] = {0};
+SceIoStat prop_stat;
+int prop_selected_row = 0;
+int prop_checkboxes[6] = {0};
+
+
+
+
+
+static void load_preview_file(const char *path) {
+    preview_line_count = 0;
+    preview_scroll = 0;
+    
+    SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) return;
+    
+    char buf[2048];
+    int bytes_read;
+    int line_len = 0;
+    char line[MAX_PREVIEW_LINE_LEN];
+    memset(line, 0, sizeof(line));
+    
+    while ((bytes_read = sceIoRead(fd, buf, sizeof(buf))) > 0 && preview_line_count < MAX_PREVIEW_LINES) {
+        for (int i = 0; i < bytes_read && preview_line_count < MAX_PREVIEW_LINES; i++) {
+            char c = buf[i];
+            if (c == '\n') {
+                line[line_len] = '\0';
+                strncpy(preview_lines[preview_line_count], line, MAX_PREVIEW_LINE_LEN - 1);
+                preview_lines[preview_line_count][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+                preview_line_count++;
+                
+                line_len = 0;
+                memset(line, 0, sizeof(line));
+            } else if (c == '\t') {
+                for (int space = 0; space < 4 && line_len < MAX_PREVIEW_LINE_LEN - 1; space++) {
+                    line[line_len++] = ' ';
+                }
+            } else if (c != '\r') {
+                if (line_len < MAX_PREVIEW_LINE_LEN - 1) {
+                    line[line_len++] = c;
+                }
+            }
+        }
+    }
+    
+    if (line_len > 0 && preview_line_count < MAX_PREVIEW_LINES) {
+        line[line_len] = '\0';
+        strncpy(preview_lines[preview_line_count], line, MAX_PREVIEW_LINE_LEN - 1);
+        preview_lines[preview_line_count][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+        preview_line_count++;
+    }
+    
+    sceIoClose(fd);
+    sceIoRemove(path);
 }
 
-static void get_file_visuals(const char *path, int is_directory, const char **icon, uint32_t *icon_color) {
-    if (is_directory) {
-        *icon = "[DIR]";
-        *icon_color = RGBA8(241, 196, 15, 255);
+static void load_sfo_preview(const char *path) {
+    preview_line_count = 0;
+    preview_scroll = 0;
+    
+    SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) return;
+    
+    int size = sceIoLseek(fd, 0, SCE_SEEK_END);
+    sceIoLseek(fd, 0, SCE_SEEK_SET);
+    
+    if (size <= (int)sizeof(SfoHeader)) {
+        sceIoClose(fd);
+        sceIoRemove(path);
         return;
     }
+    
+    void *buf = malloc(size);
+    if (!buf) {
+        sceIoClose(fd);
+        sceIoRemove(path);
+        return;
+    }
+    
+    if (sceIoRead(fd, buf, size) != size) {
+        free(buf);
+        sceIoClose(fd);
+        sceIoRemove(path);
+        return;
+    }
+    sceIoClose(fd);
+    sceIoRemove(path);
+    
+    SfoHeader *header = (SfoHeader*)buf;
+    SfoEntry *entries = (SfoEntry*)((uintptr_t)buf + sizeof(SfoHeader));
+    
+    if (header->magic != SFO_MAGIC) {
+        free(buf);
+        return;
+    }
+    
+    for (int i = 0; i < (int)header->count && preview_line_count < MAX_PREVIEW_LINES; i++) {
+        const char *key = (const char *)buf + header->keyofs + entries[i].nameofs;
+        const char *val = (const char *)buf + header->valofs + entries[i].dataofs;
+        
+        char line_buf[MAX_PREVIEW_LINE_LEN];
+        if (entries[i].type == 2) {
+            snprintf(line_buf, sizeof(line_buf), "%s: %s", key, val);
+        } else if (entries[i].type == 4) {
+            uint32_t int_val = *(uint32_t*)val;
+            snprintf(line_buf, sizeof(line_buf), "%s: %u (0x%08X)", key, int_val, int_val);
+        } else {
+            snprintf(line_buf, sizeof(line_buf), "%s: [Binary]", key);
+        }
+        
+        strncpy(preview_lines[preview_line_count], line_buf, MAX_PREVIEW_LINE_LEN - 1);
+        preview_lines[preview_line_count][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+        preview_line_count++;
+    }
+    
+    free(buf);
+}
 
-    if (is_vpk_file(path)) {
-        *icon = "[VPK]";
-        *icon_color = RGBA8(46, 204, 113, 255);
-    } else if (is_zip_file(path)) {
-        *icon = "[ZIP]";
-        *icon_color = RGBA8(52, 152, 219, 255);
-    } else if (is_tar_file(path)) {
-        *icon = "[TAR]";
-        *icon_color = RGBA8(230, 126, 34, 255);
-    } else if (is_gzip_file(path)) {
-        *icon = "[GZ]";
-        *icon_color = RGBA8(26, 188, 156, 255);
-    } else if (is_bzip2_file(path)) {
-        *icon = "[BZ2]";
-        *icon_color = RGBA8(241, 196, 15, 255);
+static int try_open_archive(const char *path, ArchiveInfo *info) {
+    if (is_zip_file(path) || is_vpk_file(path) ||
+        is_tar_file(path) || is_gzip_file(path) ||
+        is_bzip2_file(path)) {
+        return zip_open(path, info);
     } else if (is_rar_file(path)) {
-        *icon = "[RAR]";
-        *icon_color = RGBA8(231, 76, 60, 255);
+        return rar_open(path, info);
     } else if (is_7z_file(path)) {
-        *icon = "[7Z]";
-        *icon_color = RGBA8(155, 89, 182, 255);
-    } else {
-        *icon = "[FILE]";
-        *icon_color = RGBA8(110, 118, 129, 255);
+        return archive7z_open(path, info);
+    } else if (is_psarc_file(path)) {
+        return psarc_open(path, info);
     }
+    return -1;
 }
 
-static const char *get_file_type_label(const char *path, int is_directory) {
-    if (is_directory) {
-        return language_get(&lang, STR_FOLDER);
-    }
-    if (is_vpk_file(path)) {
-        return "VPK";
-    }
-    if (is_zip_file(path)) {
-        return "ZIP";
-    }
-    if (is_tar_file(path)) {
-        return "TAR";
-    }
-    if (is_gzip_file(path)) {
-        return "GZIP";
-    }
-    if (is_bzip2_file(path)) {
-        return "BZIP2";
-    }
-    if (is_rar_file(path)) {
-        return "RAR";
-    }
-    if (is_7z_file(path)) {
-        return "7Z";
-    }
-    return language_get(&lang, STR_FILE);
-}
-
-void draw_progress_bar(int x, int y, int width, int height, int progress) {
-    vita2d_draw_rectangle(x, y, width, height, 0xFFFFFFFF);
-    int filled_width = (width * progress) / 100;
-    vita2d_draw_rectangle(x, y, filled_width, height, 0x00FF00FF);
-}
-
-void format_size(char *buf, size_t size) {
-    if (size < 1024) {
-        sprintf(buf, "%lu B", (unsigned long)size);
-    } else if (size < 1024 * 1024) {
-        sprintf(buf, "%.1f KB", size / 1024.0);
-    } else if (size < 1024 * 1024 * 1024) {
-        sprintf(buf, "%.1f MB", size / (1024.0 * 1024.0));
-    } else {
-        sprintf(buf, "%.1f GB", size / (1024.0 * 1024.0 * 1024.0));
-    }
-}
-
-void draw_browser() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s", language_get(&lang, STR_APP_TITLE));
-    
-    vita2d_draw_rectangle(0, 50, 960, 30, RGBA8(28, 33, 40, 255));
-    vita2d_pgf_draw_textf(font, 10, 70, RGBA8(201, 209, 217, 255), 0.8f, "%s: %s", 
-        language_get(&lang, STR_PATH), browser.current_path);
-    
-    int header_y = 85;
-    vita2d_draw_rectangle(0, header_y, 960, 25, RGBA8(33, 38, 45, 255));
-    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_NAME));
-    vita2d_pgf_draw_textf(font, 600, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_SIZE));
-    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_TYPE));
-    int start_y = 110;
-    int line_height = 22;
-    int visible_files = (510 - start_y) / line_height;
-    
-    for (int i = 0; i < browser.file_count && i < visible_files; i++) {
-        int idx = scroll_offset + i;
-        if (idx >= browser.file_count) break;
+static int try_open_archive_with_password(const char *path, ArchiveInfo *info) {
+    int open_res = try_open_archive(path, info);
+    while (open_res == -5) {
+        char pass_buf[128] = {0};
+        const char *prompt_title = language_get(&lang, STR_ENTER_PASSWORD);
         
-        FileInfo *file = &browser.files[idx];
-        int y = start_y + 5 + (i * line_height);
-        
-        if (idx == browser.selected_index) {
-            vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(31, 111, 235, 255));
-        } else if (i % 2 != 0) {
-            vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(22, 27, 34, 255));
-        }
-        
-        const char *icon = NULL;
-        uint32_t icon_color = 0;
-        get_file_visuals(file->name, file->is_directory, &icon, &icon_color);
-        vita2d_pgf_draw_textf(font, 10, y + 16, icon_color, 0.8f, "%s", icon);
-        
-        uint32_t text_color = (idx == browser.selected_index) ? RGBA8(255, 255, 255, 255) : RGBA8(201, 209, 217, 255);
-        vita2d_pgf_draw_textf(font, 60, y + 16, text_color, 0.85f, "%s", file->name);
-        
-        if (current_mode == MODE_ZIP_CREATION && browser.selection_mask[idx]) {
-            vita2d_pgf_draw_textf(font, 40, y + 16, RGBA8(46, 204, 113, 255), 0.8f, "*");
-        }
-
-        if (!file->is_directory) {
-            char size_buf[32];
-            format_size(size_buf, file->size);
-            vita2d_pgf_draw_textf(font, 600, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", size_buf);
-        }
-        
-        const char *type = get_file_type_label(file->name, file->is_directory);
-        uint32_t type_color = (idx == browser.selected_index) ? RGBA8(255, 255, 255, 255) : icon_color;
-        vita2d_pgf_draw_textf(font, 800, y + 16, type_color, 0.8f, "%s", type);
-    }
-}
-
-void draw_footer(const char **actions, int count) {
-    vita2d_draw_rectangle(0, 510, 960, 34, RGBA8(21, 26, 33, 255));
-
-    int x_pos = 20;
-    const int spacing = 30;
-
-    for (int i = 0; i < count; ++i) {
-        if (actions[i] && strlen(actions[i]) > 0) {
-            vita2d_pgf_draw_textf(font, x_pos, 532, RGBA8(201, 209, 217, 255), 0.8f, "%s", actions[i]);
-            x_pos += vita2d_pgf_text_width(font, 0.8f, actions[i]) + spacing;
+        if (get_ime_input(pass_buf, 120, prompt_title, NULL) == 0 && strlen(pass_buf) > 0) {
+            strncpy(info->password, pass_buf, sizeof(info->password) - 1);
+            open_res = try_open_archive(path, info);
+        } else {
+            open_res = -1;
+            break;
         }
     }
+    return open_res;
 }
 
-void draw_browser_footer() {
-    if (current_mode == MODE_ZIP_CREATION) {
-        char sq_str[64], tri_str[64], o_str[64];
-        snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_TOGGLE_SELECT));
-        snprintf(tri_str, sizeof(tri_str), "TRIANGLE: %s", language_get(&lang, STR_CREATE_ZIP));
-        snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_CANCEL));
-
-        const char *actions[] = {sq_str, tri_str, o_str};
-        draw_footer(actions, 3);
-    } else {
-        char x_str[64], o_str[64], tri_str[64], sel_str[64], start_str[64];
-        snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SELECT_ENTER));
-        snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-        snprintf(tri_str, sizeof(tri_str), "TRIANGLE: %s", language_get(&lang, STR_CREATE_ZIP));
-        snprintf(sel_str, sizeof(sel_str), "SELECT: %s", language_get(&lang, STR_LANGUAGE));
-        snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
-
-        const char *actions[] = {x_str, o_str, tri_str, sel_str, start_str};
-        draw_footer(actions, 5);
-    }
-}
-
-void draw_dest_browser() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s", language_get(&lang, STR_SELECT_DEST_FOLDER));
-
-    draw_browser();
-
-    char x_str[64], o_str[64], sq_str[64];
-    snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SELECT_ENTER));
-    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_CONFIRM_DEST));
-    const char* actions[] = {x_str, o_str, sq_str};
-    draw_footer(actions, 3);
-}
-
-void draw_archive_view() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", 
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_ARCHIVE_CONTENTS));
-    
-    char size_buf[32];
-    format_size(size_buf, archive_info.total_size);
-    vita2d_draw_rectangle(0, 50, 960, 30, RGBA8(28, 33, 40, 255));
-    char info_text[128];
-    snprintf(info_text, sizeof(info_text), "%s: %d | %s: %s", 
-        language_get(&lang, STR_FILES), archive_info.file_count,
-        language_get(&lang, STR_SIZE), size_buf);
-    vita2d_pgf_draw_textf(font, 10, 70, RGBA8(201, 209, 217, 255), 0.8f, "%s", info_text);
-    
-    int header_y = 85;
-    vita2d_draw_rectangle(0, header_y, 960, 25, RGBA8(33, 38, 45, 255));
-    vita2d_pgf_draw_textf(font, 10, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_NAME));
-    vita2d_pgf_draw_textf(font, 500, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_SIZE));
-    vita2d_pgf_draw_textf(font, 650, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_COMPRESSED));
-    vita2d_pgf_draw_textf(font, 800, header_y + 18, RGBA8(240, 246, 252, 255), 0.85f, "%s", language_get(&lang, STR_TYPE));
-    int start_y = 110;
-    int line_height = 22;
-    int visible_files = (510 - start_y) / line_height;
-    
-    for (int i = 0; i < archive_info.file_count && i < visible_files; i++) {
-        int idx = archive_scroll + i;
-        if (idx >= archive_info.file_count) break;
-        
-        ArchiveFile *file = &archive_info.files[idx];
-        int y = start_y + 5 + (i * line_height);
-        
-        if (idx == archive_selected) {
-            vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(31, 111, 235, 255));
-        } else if (i % 2 != 0) {
-            vita2d_draw_rectangle(0, y, 960, line_height, RGBA8(22, 27, 34, 255));
-        }
-        
-        const char *icon = NULL;
-        uint32_t icon_color = 0;
-        get_file_visuals(file->filename, file->is_directory, &icon, &icon_color);
-        vita2d_pgf_draw_textf(font, 10, y + 16, icon_color, 0.8f, "%s", icon);
-        
-        uint32_t text_color = (idx == archive_selected) ? RGBA8(255, 255, 255, 255) : RGBA8(201, 209, 217, 255);
-        vita2d_pgf_draw_textf(font, 60, y + 16, text_color, 0.85f, "%s", file->filename);
-        
-        if (!file->is_directory) {
-            format_size(size_buf, file->uncompressed_size);
-            vita2d_pgf_draw_textf(font, 500, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", size_buf);
-            
-            format_size(size_buf, file->compressed_size);
-            vita2d_pgf_draw_textf(font, 650, y + 16, RGBA8(139, 148, 158, 255), 0.8f, "%s", size_buf);
-        }
-        
-        const char *type = get_file_type_label(file->filename, file->is_directory);
-        uint32_t type_color = (idx == archive_selected) ? RGBA8(255, 255, 255, 255) : icon_color;
-        vita2d_pgf_draw_textf(font, 800, y + 16, type_color, 0.8f, "%s", type);
-    }
-    char x_str[64], sq_str[64], o_str[64], tri_str[64], start_str[64];
-    int vpk_selected = archive_info.file_count > 0 &&
-        is_vpk_file(archive_info.files[archive_selected].filename);
-    int smart_install_available = !vpk_selected && archive_can_smart_install(&archive_info);
-
-    if (vpk_selected) {
-        snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_PRESS_X_INSTALL_VPK));
-    } else if (smart_install_available) {
-        snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SMART_INSTALL));
-        snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_EXTRACT_ALL));
-    } else {
-        snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_EXTRACT_ALL));
-    }
-    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    snprintf(tri_str, sizeof(tri_str), "TRIANGLE: %s", language_get(&lang, STR_INFO));
-    snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
-
-    if (smart_install_available) {
-        const char *actions[] = {x_str, sq_str, o_str, tri_str, start_str};
-        draw_footer(actions, 5);
-    } else {
-        const char *actions[] = {x_str, o_str, tri_str, start_str};
-        draw_footer(actions, 4);
-    }
-}
-
-void draw_extracting() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", 
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_EXTRACTING));
-    
-    int panel_y = 150;
-    vita2d_draw_rectangle(100, panel_y, 760, 200, RGBA8(22, 27, 34, 255));
-    vita2d_draw_rectangle(100, panel_y, 760, 1, RGBA8(31, 111, 235, 255));
-    
-    vita2d_pgf_draw_textf(font, 120, panel_y + 40, RGBA8(240, 246, 252, 255), 1.2f, "%s: %d%%", 
-        language_get(&lang, STR_PROGRESS), extract_progress);
-    
-    vita2d_draw_rectangle(120, panel_y + 80, 720, 40, RGBA8(33, 38, 45, 255));
-    int filled_width = (720 * extract_progress) / 100;
-    vita2d_draw_rectangle(120, panel_y + 80, filled_width, 40, RGBA8(31, 111, 235, 255));
-    
-    const char *status = extract_progress < 100
-        ? language_get(&lang, STR_EXTRACTING_FILES)
-        : language_get(&lang, STR_COMPLETE);
-    vita2d_pgf_draw_textf(font, 120, panel_y + 140, RGBA8(139, 148, 158, 255), 0.9f, "%s", status);
-    
-    char sq_str[64], start_str[64];
-    snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_CANCEL_EXTRACTION));
-    snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
-    const char *actions[] = {sq_str, start_str};
-    draw_footer(actions, 2);
-}
-
-void draw_installing(int success) {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    const char *install_title = current_install_mode == INSTALL_MODE_APP
-        ? language_get(&lang, STR_INSTALL_APP)
-        : language_get(&lang, STR_INSTALL_VPK);
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s",
-        language_get(&lang, STR_APP_TITLE), install_title);
-
-    int panel_y = 150;
-    vita2d_draw_rectangle(100, panel_y, 760, 200, RGBA8(22, 27, 34, 255));
-    vita2d_draw_rectangle(100, panel_y, 760, 1, RGBA8(31, 111, 235, 255));
-
-    if (extract_progress < 100) {
-        vita2d_pgf_draw_textf(font, 120, panel_y + 40, RGBA8(240, 246, 252, 255), 1.2f, "%s: %d%%",
-            language_get(&lang, STR_PROGRESS), extract_progress);
-
-        vita2d_draw_rectangle(120, panel_y + 80, 720, 40, RGBA8(33, 38, 45, 255));
-        int filled_width = (720 * extract_progress) / 100;
-        vita2d_draw_rectangle(120, panel_y + 80, filled_width, 40, RGBA8(31, 111, 235, 255));
-
-        vita2d_pgf_draw_textf(font, 120, panel_y + 140, RGBA8(139, 148, 158, 255), 0.9f, "%s",
-            install_title);
-    } else {
-        const char *result = success
-            ? (current_install_mode == INSTALL_MODE_APP
-                ? language_get(&lang, STR_APP_INSTALL_COMPLETE)
-                : language_get(&lang, STR_VPK_INSTALL_COMPLETE))
-            : (current_install_mode == INSTALL_MODE_APP
-                ? language_get(&lang, STR_APP_INSTALL_ERROR)
-                : language_get(&lang, STR_VPK_INSTALL_ERROR));
-        uint32_t color = success ? RGBA8(46, 204, 113, 255) : RGBA8(231, 76, 60, 255);
-        vita2d_pgf_draw_textf(font, 120, panel_y + 100, color, 1.0f, "%s", result);
-    }
-
-    char start_str[64];
-    snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
-    const char *actions[] = {start_str};
-    draw_footer(actions, 1);
-}
-
-void draw_smart_install_confirm() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s",
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_SMART_INSTALL));
-
-    int panel_y = 150;
-    vita2d_draw_rectangle(100, panel_y, 760, 200, RGBA8(22, 27, 34, 255));
-    vita2d_draw_rectangle(100, panel_y, 760, 1, RGBA8(31, 111, 235, 255));
-
-    vita2d_pgf_draw_textf(font, 120, panel_y + 60, RGBA8(240, 246, 252, 255), 0.9f, "%s",
-        language_get(&lang, STR_SMART_INSTALL_DETECTED));
-    vita2d_pgf_draw_textf(font, 120, panel_y + 110, RGBA8(201, 209, 217, 255), 0.9f, "%s",
-        language_get(&lang, STR_SMART_INSTALL_PROMPT));
-
-    char x_str[64], sq_str[64], o_str[64];
-    snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_INSTALL_APP));
-    snprintf(sq_str, sizeof(sq_str), "SQUARE: %s", language_get(&lang, STR_EXTRACT_ALL));
-    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    const char *actions[] = {x_str, sq_str, o_str};
-    draw_footer(actions, 3);
-}
-
-void draw_info() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", 
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_ARCHIVE_INFO));
-    
-    int panel_y = 100;
-    vita2d_draw_rectangle(100, panel_y, 760, 300, RGBA8(22, 27, 34, 255));
-    vita2d_draw_rectangle(100, panel_y, 760, 1, RGBA8(31, 111, 235, 255));
-    
-    char size_buf[32];
-    char comp_size_buf[32];
-    format_size(size_buf, archive_info.total_size);
-    format_size(comp_size_buf, archive_info.total_compressed_size);
-    
-    int y = panel_y + 40;
-    int line_height = 50;
-    
-    vita2d_pgf_draw_textf(font, 120, y, RGBA8(139, 148, 158, 255), 0.8f, "%s:", 
-        language_get(&lang, STR_TOTAL_FILES));
-    vita2d_pgf_draw_textf(font, 400, y, RGBA8(201, 209, 217, 255), 0.9f, "%d", archive_info.file_count);
-    y += line_height;
-    
-    vita2d_pgf_draw_textf(font, 120, y, RGBA8(139, 148, 158, 255), 0.8f, "%s:", 
-        language_get(&lang, STR_UNCOMPRESSED_SIZE));
-    vita2d_pgf_draw_textf(font, 400, y, RGBA8(201, 209, 217, 255), 0.9f, "%s", size_buf);
-    y += line_height;
-    
-    vita2d_pgf_draw_textf(font, 120, y, RGBA8(139, 148, 158, 255), 0.8f, "%s:", 
-        language_get(&lang, STR_COMPRESSED_SIZE));
-    vita2d_pgf_draw_textf(font, 400, y, RGBA8(201, 209, 217, 255), 0.9f, "%s", comp_size_buf);
-    y += line_height;
-    
-    float ratio = archive_info.total_size > 0 ? 
-        (100.0 * archive_info.total_compressed_size) / archive_info.total_size : 0;
-    vita2d_pgf_draw_textf(font, 120, y, RGBA8(139, 148, 158, 255), 0.8f, "%s:", 
-        language_get(&lang, STR_COMPRESSION_RATIO));
-    vita2d_pgf_draw_textf(font, 400, y, RGBA8(201, 209, 217, 255), 0.9f, "%.1f%%", ratio);
-    
-    char o_str[64], start_str[64];
-    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    snprintf(start_str, sizeof(start_str), "START: %s", language_get(&lang, STR_EXIT));
-    const char *actions[] = {o_str, start_str};
-    draw_footer(actions, 2);
-}
-
-void draw_settings() {
-    vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", 
-        language_get(&lang, STR_APP_TITLE), language_get(&lang, STR_LANGUAGE));
-
-    int start_y = 110;
-    int line_height = 40;
-
-    for (int i = 0; i < LANG_COUNT; i++) {
-        int y = start_y + (i * line_height);
-        if (i == settings_selected) {
-            vita2d_draw_rectangle(50, y - 5, 860, line_height, RGBA8(31, 111, 235, 255));
-        }
-        
-        uint32_t text_color = (i == settings_selected) ? RGBA8(255, 255, 255, 255) : RGBA8(201, 209, 217, 255);
-        vita2d_pgf_draw_textf(font, 70, y + 22, text_color, 1.0f, language_get_name(i));
-    }
-
-    char x_str[64], o_str[64];
-    snprintf(x_str, sizeof(x_str), "X: %s", language_get(&lang, STR_SELECT_ENTER));
-    snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    const char *actions[] = {x_str, o_str};
-    draw_footer(actions, 2);
-}
-
-void save_settings() {
-    sceIoMkdir("ux0:/data/VitaArchive", 0777);
-    SceUID fd = sceIoOpen("ux0:/data/VitaArchive/settings.cfg", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (fd >= 0) {
-        int lang_code = language_get_current(&lang);
-        sceIoWrite(fd, &lang_code, sizeof(lang_code));
-        sceIoClose(fd);
-    }
-}
-
-void load_settings() {
-    SceUID fd = sceIoOpen("ux0:/data/VitaArchive/settings.cfg", SCE_O_RDONLY, 0);
-    if (fd >= 0) {
-        int lang_code;
-        sceIoRead(fd, &lang_code, sizeof(lang_code));
-        sceIoClose(fd);
-        language_set(&lang, (LanguageCode)lang_code);
-    }
-}
-
-static int get_ime_input(char *output, int max_len, const char *title) {
+static int get_ime_input(char *output, int max_len, const char *title, const char *initial_text) {
     SceImeDialogParam param;
     sceImeDialogParamInit(&param);
 
     uint16_t title_utf16[64];
     utf8_to_utf16(title_utf16, 64, (const uint8_t *)title);
 
-    uint16_t initial_text_utf16[2] = {0};
+    uint16_t initial_text_utf16[128] = {0};
+    if (initial_text) {
+        utf8_to_utf16(initial_text_utf16, 128, (const uint8_t *)initial_text);
+    }
     uint16_t output_utf16[max_len + 1];
+    memset(output_utf16, 0, sizeof(output_utf16));
+    if (initial_text) {
+        utf8_to_utf16(output_utf16, max_len, (const uint8_t *)initial_text);
+    }
 
     param.sdkVersion = 0x03150021;
     param.supportedLanguages = 0;
@@ -603,6 +417,8 @@ void archive_close_custom(ArchiveInfo *info) {
         rar_close(info);
     } else if (is_7z_file(info->archive_path)) {
         archive7z_close(info);
+    } else if (is_psarc_file(info->archive_path)) {
+        psarc_close(info);
     }
 }
 
@@ -616,6 +432,8 @@ void archive_cancel_custom(ArchiveInfo *info) {
         rar_cancel(info);
     } else if (is_7z_file(info->archive_path)) {
         archive7z_cancel(info);
+    } else if (is_psarc_file(info->archive_path)) {
+        psarc_cancel(info);
     }
 }
 
@@ -629,14 +447,166 @@ int archive_extract_all_custom(const char *dest, ArchiveInfo *info, int *progres
         return rar_extract_all(dest, info, progress);
     } else if (is_7z_file(info->archive_path)) {
         return archive7z_extract_all(dest, info, progress);
+    } else if (is_psarc_file(info->archive_path)) {
+        return psarc_extract_all(dest, info, progress);
     }
     return -1;
+}
+
+int archive_extract_file_custom(const char *dest, int file_index, ArchiveInfo *info) {
+    if (!info || !info->is_open) return -1;
+    if (is_zip_file(info->archive_path) || is_vpk_file(info->archive_path) ||
+        is_tar_file(info->archive_path) || is_gzip_file(info->archive_path) ||
+        is_bzip2_file(info->archive_path)) {
+        return zip_extract_file(dest, file_index, info);
+    } else if (is_rar_file(info->archive_path)) {
+        return rar_extract_file(dest, file_index, info);
+    } else if (is_7z_file(info->archive_path)) {
+        return archive7z_extract_file(dest, file_index, info);
+    } else if (is_psarc_file(info->archive_path)) {
+        return psarc_extract_file(dest, file_index, info);
+    }
+    return -1;
+}
+
+
+
+static int worker_thread_func(SceSize args, void *argp) {
+    WorkerArgs *wargs = (WorkerArgs *)argp;
+    worker_running = 1;
+    worker_processed_bytes = 0;
+    worker_start_time = sceKernelGetSystemTimeWide();
+    
+    if (wargs->mode == 0) {
+        worker_total_bytes = archive_info.total_size;
+        worker_result = archive_extract_all_custom(wargs->dest, &archive_info, &extract_progress);
+    } else if (wargs->mode == 1) {
+        if (wargs->index >= 0 && wargs->index < archive_info.file_count) {
+            worker_total_bytes = archive_info.files[wargs->index].uncompressed_size;
+            worker_result = archive_extract_file_custom(wargs->dest, wargs->index, &archive_info);
+        } else {
+            worker_result = -1;
+        }
+        extract_progress = 100;
+    } else if (wargs->mode == 2) {
+        worker_total_bytes = archive_info.total_size;
+        worker_result = vpk_install_homebrew_from_archive(&archive_info, &extract_progress);
+    } else if (wargs->mode == 3) {
+        if (wargs->index >= 0 && wargs->index < archive_info.file_count) {
+            worker_total_bytes = archive_info.files[wargs->index].uncompressed_size;
+            worker_result = vpk_install_from_zip(&archive_info, wargs->index, &extract_progress);
+        } else {
+            worker_result = -1;
+        }
+        extract_progress = 100;
+    } else if (wargs->mode == 4) {
+        const char *files_to_add[MAX_FILES];
+        int files_to_add_count = 0;
+        static char file_paths[MAX_FILES][MAX_PATH];
+        
+        worker_total_bytes = 0;
+        for (int i = 0; i < browser.file_count; i++) {
+            if (browser.selection_mask[i]) {
+                strncpy(file_paths[files_to_add_count], browser.current_path, MAX_PATH - 1);
+                file_paths[files_to_add_count][MAX_PATH - 1] = '\0';
+                strncat(file_paths[files_to_add_count], browser.files[i].name, MAX_PATH - strlen(file_paths[files_to_add_count]) - 1);
+                
+                SceIoStat stat;
+                if (sceIoGetstat(file_paths[files_to_add_count], &stat) >= 0) {
+                    worker_total_bytes += stat.st_size;
+                }
+                
+                files_to_add[files_to_add_count] = file_paths[files_to_add_count];
+                files_to_add_count++;
+            }
+        }
+        
+        worker_result = archive_create_custom_format(wargs->dest, files_to_add, files_to_add_count, wargs->index);
+        extract_progress = 100;
+        filebrowser_refresh(&browser);
+    } else if (wargs->mode == 5) {
+        worker_total_bytes = archive_info.total_size;
+        worker_result = archive_test_integrity(&archive_info, &extract_progress);
+    } else if (wargs->mode == 6) {
+        worker_total_bytes = 0;
+        for (int i = 0; i < clipboard_file_count; i++) {
+            worker_total_bytes += get_path_total_size(clipboard_paths[i]);
+        }
+        
+        worker_result = 0;
+        for (int i = 0; i < clipboard_file_count; i++) {
+            const char *src = clipboard_paths[i];
+            const char *base = strrchr(src, '/');
+            base = base ? base + 1 : src;
+            
+            char dest_path[2048];
+            snprintf(dest_path, sizeof(dest_path), "%s/%s", wargs->dest, base);
+            
+            int res = copy_or_move_path_recursive(src, dest_path, clipboard_is_move);
+            if (res < 0) {
+                worker_result = res;
+            }
+        }
+        if (clipboard_is_move) {
+            clipboard_file_count = 0;
+        }
+        extract_progress = 100;
+        filebrowser_refresh(&browser);
+    } else if (wargs->mode == 7) {
+        worker_total_bytes = 0;
+        int count_to_extract = 0;
+        for (int i = 0; i < archive_info.file_count; i++) {
+            if (archive_selection_mask[i]) {
+                worker_total_bytes += archive_info.files[i].uncompressed_size;
+                count_to_extract++;
+            }
+        }
+        
+        worker_result = 0;
+        int processed_files = 0;
+        for (int i = 0; i < archive_info.file_count; i++) {
+            if (archive_selection_mask[i]) {
+                int res = archive_extract_file_custom(wargs->dest, i, &archive_info);
+                if (res < 0) {
+                    worker_result = res;
+                }
+                processed_files++;
+                extract_progress = (processed_files * 100) / count_to_extract;
+            }
+        }
+        extract_progress = 100;
+    } else if (wargs->mode == 8) {
+        worker_result = calculate_file_hashes(hash_filepath, hash_md5, hash_sha256, &hash_cancel, &hash_progress);
+        hash_progress = 100;
+    }
+    
+    worker_running = 0;
+    return sceKernelExitDeleteThread(0);
+}
+
+static void ensure_system_folders() {
+    sceIoMkdir("ux0:/app", 0777);
+    sceIoMkdir("ux0:/appmeta", 0777);
+    sceIoMkdir("ux0:/bgdl", 0777);
+    sceIoMkdir("ux0:/data", 0777);
+    sceIoMkdir("ux0:/license", 0777);
+    sceIoMkdir("ux0:/license/app", 0777);
+    sceIoMkdir("ux0:/patch", 0777);
+    sceIoMkdir("ux0:/temp", 0777);
+    sceIoMkdir("ux0:/user", 0777);
+    sceIoMkdir("ux0:/user/00", 0777);
+    sceIoMkdir("ux0:/user/00/savedata", 0777);
 }
 
 int main() {
     vita2d_init();
     vita2d_set_clear_color(RGBA8(13, 17, 23, 255));
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+
+
+    load_sce_paf();
+    sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    scePromoterUtilityInit();
 
     sceSysmoduleLoadModule(SCE_SYSMODULE_PGF);
     font = vita2d_load_default_pgf();
@@ -649,55 +619,98 @@ int main() {
     
     language_init(&lang);
     load_settings();
+    ensure_system_folders();
     filebrowser_init(&browser, "/");
     
     int old_buttons = 0;
+    int repeat_count = 0;
+    int repeat_button = 0;
     
     while (1) {
+        sceKernelPowerTick(0);
         SceCtrlData pad;
         sceCtrlPeekBufferPositive(0, &pad, 1);
         int pressed = pad.buttons & ~old_buttons;
         old_buttons = pad.buttons;
         
-        if (pressed & SCE_CTRL_START) break;
+        int repeat_event = 0;
+        int active_repeat_buttons = pad.buttons & (SCE_CTRL_UP | SCE_CTRL_DOWN);
+        if (active_repeat_buttons) {
+            if (active_repeat_buttons == repeat_button) {
+                repeat_count++;
+            } else {
+                repeat_button = active_repeat_buttons;
+                repeat_count = 0;
+            }
+            if (repeat_count > 20 && (repeat_count - 20) % 6 == 0) {
+                repeat_event = repeat_button;
+            }
+        } else {
+            repeat_button = 0;
+            repeat_count = 0;
+        }
         
         switch (current_mode) {
             case MODE_BROWSER:
-                if (pressed & SCE_CTRL_UP) {
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
                     filebrowser_navigate_up(&browser);
-                } else if (pressed & SCE_CTRL_DOWN) {
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
                     filebrowser_navigate_down(&browser);
                 } else if (pressed & SCE_CTRL_CROSS) {
                     int result = filebrowser_enter(&browser);
-                    if (result == 1) {
+                    if (result == 0) {
+                        browser.search_query[0] = '\0';
+                        scroll_offset = 0;
+                    } else if (result == 1) {
                         const char *selected = filebrowser_get_selected_path(&browser);
                         if (selected) {
-                            int open_res = -1;
-                            if (is_zip_file(selected) || is_vpk_file(selected) ||
-                                is_tar_file(selected) || is_gzip_file(selected) ||
-                                is_bzip2_file(selected)) {
-                                open_res = zip_open(selected, &archive_info);
-                            } else if (is_rar_file(selected)) {
-                                open_res = rar_open(selected, &archive_info);
-                            } else if (is_7z_file(selected)) {
-                                open_res = archive7z_open(selected, &archive_info);
-                            }
+                            int open_res = try_open_archive_with_password(selected, &archive_info);
 
                             if (open_res >= 0) {
                                 current_mode = MODE_ARCHIVE_VIEW;
                                 archive_scroll = 0;
                                 archive_selected = 0;
+                                archive_stack_depth = 1;
+                                strncpy(archive_stack[0], selected, MAX_PATH - 1);
+                                archive_stack[0][MAX_PATH - 1] = '\0';
+                            } else {
+                                show_toast(language_get(&lang, STR_CANNOT_OPEN), RGBA8(231, 76, 60, 255));
                             }
                         }
                     }
                 } else if (pressed & SCE_CTRL_CIRCLE) {
-                    filebrowser_navigate_back(&browser);
+                    if (strlen(browser.search_query) > 0) {
+                        browser.search_query[0] = '\0';
+                        filebrowser_refresh(&browser);
+                    } else {
+                        filebrowser_navigate_back(&browser);
+                    }
                 } else if (pressed & SCE_CTRL_SELECT) {
+                    if (ftp_server_start(ftp_ip, &ftp_port)) {
+                        current_mode = MODE_FTP_SERVER;
+                        char ftp_toast[128];
+                        snprintf(ftp_toast, sizeof(ftp_toast), "FTP: %s:%d", ftp_ip, ftp_port);
+                        show_toast(ftp_toast, RGBA8(52, 152, 219, 255));
+                    } else {
+                        LanguageCode cl = language_get_current(&lang);
+                        const char *emsg =
+                            (cl == LANG_IT) ? "Errore avvio FTP" :
+                            (cl == LANG_ES) ? "Error al iniciar FTP" :
+                            (cl == LANG_FR) ? "Erreur demarrage FTP" :
+                            (cl == LANG_DE) ? "FTP-Startfehler" :
+                            "FTP server failed to start";
+                        show_toast(emsg, RGBA8(231, 76, 60, 255));
+                    }
+                } else if (pressed & SCE_CTRL_START) {
                     settings_selected = language_get_current(&lang);
                     current_mode = MODE_SETTINGS;
                 } else if (pressed & SCE_CTRL_TRIANGLE) {
-                    current_mode = MODE_ZIP_CREATION;
-                    memset(browser.selection_mask, 0, sizeof(browser.selection_mask));
+                    actions_menu_selected = 0;
+                    current_mode = MODE_ACTIONS_MENU;
+                } else if (pressed & SCE_CTRL_SQUARE) {
+                    if (browser.file_count > 0) {
+                        current_mode = MODE_DELETE_CONFIRM;
+                    }
                 }
                 
                 int visible_files = (510 - 110) / 22;
@@ -711,13 +724,17 @@ int main() {
                 int vpk_selected = archive_info.file_count > 0 &&
                     is_vpk_file(archive_info.files[archive_selected].filename);
                 int smart_install_available = !vpk_selected && archive_can_smart_install(&archive_info);
-                if (pressed & SCE_CTRL_UP) {
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
                     if (archive_selected > 0) {
                         archive_selected--;
+                    } else if (archive_info.file_count > 0) {
+                        archive_selected = archive_info.file_count - 1;
                     }
-                } else if (pressed & SCE_CTRL_DOWN) {
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
                     if (archive_selected < archive_info.file_count - 1) {
                         archive_selected++;
+                    } else {
+                        archive_selected = 0;
                     }
                 } else if (pressed & SCE_CTRL_CROSS) {
                     if (vpk_selected) {
@@ -727,23 +744,147 @@ int main() {
                     } else if (smart_install_available) {
                         current_mode = MODE_SMART_INSTALL_CONFIRM;
                     } else {
+
+                        extract_selected_only = 1;
+                        extract_file_index = archive_selected;
                         current_mode = MODE_DEST_BROWSER;
                         filebrowser_init(&browser, "ux0:/");
                         scroll_offset = 0;
                     }
                 } else if (pressed & SCE_CTRL_CIRCLE) {
-                    archive_close_custom(&archive_info);
-                    current_mode = MODE_BROWSER;
-                } else if (pressed & SCE_CTRL_SQUARE) {
-                    if (smart_install_available) {
-                        current_mode = MODE_DEST_BROWSER;
-                        filebrowser_init(&browser, "ux0:/");
-                        scroll_offset = 0;
+                    if (archive_stack_depth > 1) {
+                        char current_nested_path[1024];
+                        strncpy(current_nested_path, archive_stack[archive_stack_depth - 1], sizeof(current_nested_path) - 1);
+                        archive_stack_depth--;
+                        
+                        archive_close_custom(&archive_info);
+                        sceIoRemove(current_nested_path);
+                        
+                        const char *parent_path = archive_stack[archive_stack_depth - 1];
+                        int open_res = try_open_archive_with_password(parent_path, &archive_info);
+                        
+                        if (open_res >= 0) {
+                            archive_selected = archive_stack_selected[archive_stack_depth - 1];
+                            archive_scroll = 0;
+                        } else {
+                            archive_stack_depth = 0;
+                            current_mode = MODE_BROWSER;
+                        }
                     } else {
-                        archive_cancel_custom(&archive_info);
+                        archive_close_custom(&archive_info);
+                        archive_stack_depth = 0;
+                        current_mode = MODE_BROWSER;
+                        vpk_cleanup_dirs();
+                    }
+                } else if (pressed & SCE_CTRL_SQUARE) {
+                    if (archive_info.file_count > 0) {
+                        archive_selection_mask[archive_selected] = !archive_selection_mask[archive_selected];
                     }
                 } else if (pressed & SCE_CTRL_TRIANGLE) {
-                    current_mode = MODE_INFO;
+                    archive_actions_selected = 0;
+                    current_mode = MODE_ARCHIVE_ACTIONS_MENU;
+                } else if (pressed & SCE_CTRL_SELECT) {
+                    const char *filename = archive_info.files[archive_selected].filename;
+                    int is_txt = is_viewable_text_file(filename);
+                    int is_arch = is_archive_file(filename);
+                    
+                    if (is_txt || is_arch) {
+
+                        vita2d_start_drawing();
+                        vita2d_clear_screen();
+                        draw_archive_view();
+                        draw_battery_status();
+                        
+                        int box_w = 420;
+                        int box_h = 100;
+                        int box_x = (960 - box_w) / 2;
+                        int box_y = (544 - box_h) / 2;
+                        
+                        vita2d_draw_rectangle(box_x, box_y, box_w, box_h, RGBA8(22, 27, 34, 255));
+                        vita2d_draw_rectangle(box_x, box_y, box_w, 1, RGBA8(31, 111, 235, 255));
+                        
+                        const char *msg = is_arch ? "Opening..." : "Loading...";
+                        LanguageCode curr_lang = language_get_current(&lang);
+                        if (curr_lang == LANG_IT) {
+                            msg = is_arch ? "Apertura in corso..." : "Caricamento in corso...";
+                        } else if (curr_lang == LANG_ES) {
+                            msg = is_arch ? "Abriendo..." : "Cargando...";
+                        } else if (curr_lang == LANG_FR) {
+                            msg = is_arch ? "Ouverture..." : "Chargement...";
+                        } else if (curr_lang == LANG_DE) {
+                            msg = is_arch ? "Öffnen..." : "Laden...";
+                        } else if (curr_lang == LANG_JPN) {
+                            msg = is_arch ? "開いています..." : "読み込んでいます...";
+                        }
+                        
+                        int msg_w = vita2d_pgf_text_width(font, 1.0f, msg);
+                        vita2d_pgf_draw_textf(font, box_x + (box_w - msg_w) / 2, box_y + 55, RGBA8(240, 246, 252, 255), 1.0f, "%s", msg);
+                        
+                        vita2d_end_drawing();
+                        vita2d_swap_buffers();
+                        
+                        if (is_txt) {
+                            char temp_dir[512];
+                            snprintf(temp_dir, sizeof(temp_dir), "%s/", VPK_TEMP_DIR);
+                            
+   
+                            sceIoMkdir(VPK_TEMP_DIR, 0777);
+                            int ext_res = archive_extract_file_custom(temp_dir, archive_selected, &archive_info);
+                            if (ext_res == 0) {
+                                char real_file_path[1024];
+                                snprintf(real_file_path, sizeof(real_file_path), "%s/%s", VPK_TEMP_DIR, filename);
+                                
+                                const char *file_ext = strrchr(filename, '.');
+                                if (file_ext && strcasecmp(file_ext, ".sfo") == 0) {
+                                    load_sfo_preview(real_file_path);
+                                } else {
+                                    load_preview_file(real_file_path);
+                                }
+                                current_mode = MODE_TEXT_PREVIEW;
+                                strncpy(preview_filename, path_basename(filename), sizeof(preview_filename) - 1);
+                                preview_filename[sizeof(preview_filename) - 1] = '\0';
+                            }
+                        } else if (is_arch) {
+                            if (archive_stack_depth < MAX_ARCHIVE_STACK) {
+                                char temp_dir[512];
+                                snprintf(temp_dir, sizeof(temp_dir), "%s/", VPK_TEMP_DIR);
+                                
+                                sceIoMkdir(VPK_TEMP_DIR, 0777);
+                                int ext_res = archive_extract_file_custom(temp_dir, archive_selected, &archive_info);
+                                if (ext_res == 0) {
+                                    char real_file_path[1024];
+                                    snprintf(real_file_path, sizeof(real_file_path), "%s/%s", VPK_TEMP_DIR, filename);
+                                    
+                                    char nested_temp_path[1024];
+                                    const char *dot = strrchr(filename, '.');
+                                    snprintf(nested_temp_path, sizeof(nested_temp_path), "%s/nested_lvl%d%s", 
+                                        VPK_TEMP_DIR, archive_stack_depth, dot ? dot : ".zip");
+                                        
+                                    sceIoRename(real_file_path, nested_temp_path);
+                                    
+                                    archive_stack_selected[archive_stack_depth - 1] = archive_selected;
+                                    strncpy(archive_stack[archive_stack_depth], nested_temp_path, MAX_PATH - 1);
+                                    archive_stack[archive_stack_depth][MAX_PATH - 1] = '\0';
+                                    archive_stack_depth++;
+                                    
+                                    archive_close_custom(&archive_info);
+                                    
+                                    int open_res = try_open_archive_with_password(nested_temp_path, &archive_info);
+                                    
+                                    if (open_res >= 0) {
+                                        archive_selected = 0;
+                                        archive_scroll = 0;
+                                    } else {
+                                        archive_stack_depth--;
+                                        sceIoRemove(nested_temp_path);
+                                        
+                                        const char *parent_path = archive_stack[archive_stack_depth - 1];
+                                        try_open_archive_with_password(parent_path, &archive_info);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 int visible_archive_files = (510 - 110) / 22;
@@ -757,37 +898,131 @@ int main() {
                 break;
                 
             case MODE_EXTRACTING: {
-                static int extracting = 0;
-                if (!extracting) {
-                    extracting = 1;
-                    sceIoMkdir(extraction_dest_path, 0777);
-                    archive_extract_all_custom(extraction_dest_path, &archive_info, &extract_progress);
-                    extracting = 0;
-                    current_mode = MODE_ARCHIVE_VIEW;
+                static int thread_started = 0;
+                static int active_mode = 0;
+                if (!thread_started && !worker_running) {
+                    thread_started = 1;
+                    extract_progress = 0;
+                    active_mode = worker_args.mode;
+                    
+                    if (active_mode == 0 || active_mode == 1 || active_mode == 7) {
+                        sceIoMkdir(extraction_dest_path, 0777);
+                        if (active_mode != 7) {
+                            worker_args.mode = extract_selected_only ? 1 : 0;
+                        }
+                        strncpy(worker_args.dest, extraction_dest_path, sizeof(worker_args.dest) - 1);
+                        worker_args.dest[sizeof(worker_args.dest) - 1] = '\0';
+                        worker_args.index = extract_file_index;
+                    }
+                    
+                    worker_thread_id = sceKernelCreateThread("extract_worker", worker_thread_func, 0x10000100, 0x10000, 0, 0, NULL);
+                    if (worker_thread_id >= 0) {
+                        sceKernelStartThread(worker_thread_id, sizeof(WorkerArgs), &worker_args);
+                    } else {
+                        thread_started = 0;
+                        current_mode = (active_mode == 4 || active_mode == 6) ? MODE_BROWSER : MODE_ARCHIVE_VIEW;
+                    }
+                } else if (thread_started && !worker_running) {
+                    thread_started = 0;
+                    extract_progress = 0;
+                    LanguageCode cl = language_get_current(&lang);
+                    
+                    if (active_mode == 4) {
+                        current_mode = MODE_BROWSER;
+                        if (worker_result == 0) {
+                            const char *ok =
+                                (cl == LANG_IT) ? "Archivio creato con successo" :
+                                (cl == LANG_ES) ? "Archivo creado con exito" :
+                                (cl == LANG_FR) ? "Archive cree avec succes" :
+                                (cl == LANG_DE) ? "Archiv erfolgreich erstellt" :
+                                "Archive created successfully";
+                            show_toast(ok, RGBA8(46, 204, 113, 255));
+                        } else {
+                            const char *err =
+                                (cl == LANG_IT) ? "Errore creazione archivio" :
+                                (cl == LANG_ES) ? "Error al crear el archivo" :
+                                (cl == LANG_FR) ? "Erreur creation archive" :
+                                (cl == LANG_DE) ? "Fehler beim Erstellen des Archivs" :
+                                "Archive creation failed";
+                            show_toast(err, RGBA8(231, 76, 60, 255));
+                        }
+                    } else if (active_mode == 5) {
+                        current_mode = MODE_INTEGRITY_RESULT;
+                    } else if (active_mode == 6) {
+                        current_mode = MODE_BROWSER;
+                        if (worker_result == 0) {
+                            show_toast(language_get(&lang, STR_TOAST_PASTE_SUCCESS), RGBA8(46, 204, 113, 255));
+                        } else {
+                            show_toast(language_get(&lang, STR_TOAST_PASTE_FAIL), RGBA8(231, 76, 60, 255));
+                        }
+                    } else {
+                        current_mode = MODE_ARCHIVE_VIEW;
+                        if (worker_result == 0) {
+                            const char *ok =
+                                (cl == LANG_IT) ? "Estrazione completata" :
+                                (cl == LANG_ES) ? "Extraccion completada" :
+                                (cl == LANG_FR) ? "Extraction terminee" :
+                                (cl == LANG_DE) ? "Entpacken abgeschlossen" :
+                                "Extraction complete";
+                            show_toast(ok, RGBA8(46, 204, 113, 255));
+                        } else {
+                            const char *err =
+                                (cl == LANG_IT) ? "Errore durante l'estrazione" :
+                                (cl == LANG_ES) ? "Error durante la extraccion" :
+                                (cl == LANG_FR) ? "Erreur lors de l'extraction" :
+                                (cl == LANG_DE) ? "Fehler beim Entpacken" :
+                                "Extraction failed";
+                            show_toast(err, RGBA8(231, 76, 60, 255));
+                        }
+                    }
                 }
                 
                 if (pressed & SCE_CTRL_SQUARE) {
                     archive_cancel_custom(&archive_info);
-                    current_mode = MODE_ARCHIVE_VIEW;
                 }
                 break;
             }
                 
             case MODE_INSTALLING: {
-                static int installing = 0;
+                static int thread_started = 0;
                 static int install_done_frames = 0;
 
-                if (!installing && install_done_frames == 0) {
-                    installing = 1;
-                    int res = current_install_mode == INSTALL_MODE_APP
-                        ? vpk_install_homebrew_from_archive(&archive_info, &extract_progress)
-                        : vpk_install_from_zip(&archive_info, archive_selected, &extract_progress);
-                    install_success = (res == 0);
-                    if (extract_progress < 100) {
-                        extract_progress = 100;
+                if (!thread_started && !worker_running && install_done_frames == 0) {
+                    thread_started = 1;
+                    extract_progress = 0;
+                    worker_args.mode = (current_install_mode == INSTALL_MODE_APP) ? 2 : 3;
+                    worker_args.index = archive_selected;
+                    
+                    worker_thread_id = sceKernelCreateThread("install_worker", worker_thread_func, 0x10000100, 0x10000, 0, 0, NULL);
+                    if (worker_thread_id >= 0) {
+                        sceKernelStartThread(worker_thread_id, sizeof(WorkerArgs), &worker_args);
+                    } else {
+                        thread_started = 0;
+                        current_mode = MODE_ARCHIVE_VIEW;
                     }
-                    installing = 0;
+                } else if (thread_started && !worker_running && install_done_frames == 0) {
+                    thread_started = 0;
+                    install_success = (worker_result == 0);
+                    extract_progress = 100;
                     install_done_frames = 90;
+                    LanguageCode cl = language_get_current(&lang);
+                    if (install_success) {
+                        const char *ok =
+                            (cl == LANG_IT) ? "VPK installato con successo!" :
+                            (cl == LANG_ES) ? "VPK instalado con exito!" :
+                            (cl == LANG_FR) ? "VPK installe avec succes!" :
+                            (cl == LANG_DE) ? "VPK erfolgreich installiert!" :
+                            "VPK installed successfully!";
+                        show_toast(ok, RGBA8(46, 204, 113, 255));
+                    } else {
+                        const char *err =
+                            (cl == LANG_IT) ? "Installazione VPK fallita" :
+                            (cl == LANG_ES) ? "Error al instalar VPK" :
+                            (cl == LANG_FR) ? "Echec installation VPK" :
+                            (cl == LANG_DE) ? "VPK-Installation fehlgeschlagen" :
+                            "VPK installation failed";
+                        show_toast(err, RGBA8(231, 76, 60, 255));
+                    }
                 } else if (install_done_frames > 0) {
                     install_done_frames--;
                     if (install_done_frames == 0) {
@@ -818,22 +1053,37 @@ int main() {
                 break;
 
             case MODE_SETTINGS:
-                if (pressed & SCE_CTRL_UP) {
-                    if (settings_selected > 0) settings_selected--;
-                } else if (pressed & SCE_CTRL_DOWN) {
-                    if (settings_selected < LANG_COUNT - 1) settings_selected++;
-                } else if (pressed & SCE_CTRL_CROSS) {
-                    language_set(&lang, (LanguageCode)settings_selected);
-                    save_settings();
-                    current_mode = MODE_BROWSER;
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (settings_item_selected > 0) settings_item_selected--;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (settings_item_selected < 1) settings_item_selected++;
+                } else if ((pressed | repeat_event) & SCE_CTRL_LEFT) {
+                    if (settings_item_selected == 0) {
+                        if (settings_selected > 0) settings_selected--;
+                        else settings_selected = LANG_COUNT - 1;
+                        language_set(&lang, (LanguageCode)settings_selected);
+                    } else {
+                        if (compress_level > 0) compress_level--;
+                        else compress_level = 2;
+                    }
+                } else if ((pressed | repeat_event) & SCE_CTRL_RIGHT) {
+                    if (settings_item_selected == 0) {
+                        if (settings_selected < LANG_COUNT - 1) settings_selected++;
+                        else settings_selected = 0;
+                        language_set(&lang, (LanguageCode)settings_selected);
+                    } else {
+                        if (compress_level < 2) compress_level++;
+                        else compress_level = 0;
+                    }
                 } else if (pressed & SCE_CTRL_CIRCLE) {
+                    save_settings();
                     current_mode = MODE_BROWSER;
                 }
                 break;
 
             case MODE_DEST_BROWSER:
-                if (pressed & SCE_CTRL_UP) filebrowser_navigate_up(&browser);
-                if (pressed & SCE_CTRL_DOWN) filebrowser_navigate_down(&browser);
+                if ((pressed | repeat_event) & SCE_CTRL_UP) filebrowser_navigate_up(&browser);
+                if ((pressed | repeat_event) & SCE_CTRL_DOWN) filebrowser_navigate_down(&browser);
                 if (pressed & SCE_CTRL_CROSS) filebrowser_enter(&browser);
                 if (pressed & SCE_CTRL_CIRCLE) filebrowser_navigate_back(&browser);
 
@@ -848,11 +1098,32 @@ int main() {
                 if (browser.selected_index >= scroll_offset + visible_files_dest) scroll_offset = browser.selected_index - visible_files_dest + 1;
                 break;
 
+            case MODE_DELETE_CONFIRM:
+                if (pressed & SCE_CTRL_CROSS) {
+                    const char *path = filebrowser_get_selected_path(&browser);
+                    if (path) {
+                        remove_path_recursive(path);
+                        filebrowser_refresh(&browser);
+                    }
+                    current_mode = MODE_BROWSER;
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_BROWSER;
+                }
+                break;
+
             case MODE_ZIP_CREATION:
-                if (pressed & SCE_CTRL_UP) filebrowser_navigate_up(&browser);
-                if (pressed & SCE_CTRL_DOWN) filebrowser_navigate_down(&browser);
-                if (pressed & SCE_CTRL_CROSS) filebrowser_enter(&browser);
-                if (pressed & SCE_CTRL_CIRCLE) current_mode = MODE_BROWSER;
+                if ((pressed | repeat_event) & SCE_CTRL_UP) filebrowser_navigate_up(&browser);
+                if ((pressed | repeat_event) & SCE_CTRL_DOWN) filebrowser_navigate_down(&browser);
+                if (pressed & SCE_CTRL_CROSS) {
+                    int result = filebrowser_enter(&browser);
+                    if (result == 0) {
+                        browser.search_query[0] = '\0';
+                        scroll_offset = 0;
+                    }
+                }
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_BROWSER;
+                }
 
                 if (pressed & SCE_CTRL_SQUARE) {
                     if (browser.file_count > 0) {
@@ -861,31 +1132,391 @@ int main() {
                 }
 
                 if (pressed & SCE_CTRL_TRIANGLE) {
-                    char zip_name[256] = {0};
-                    if (get_ime_input(zip_name, 250, "Enter ZIP name (.zip will be added)") == 0 && strlen(zip_name) > 0) {
-                        char zip_path[MAX_PATH];
-                        strncpy(zip_path, browser.current_path, MAX_PATH - 1);
-                        zip_path[MAX_PATH - 1] = '\0';
-                        strncat(zip_path, zip_name, MAX_PATH - strlen(zip_path) - 5);
-                        strncat(zip_path, ".zip", MAX_PATH - strlen(zip_path) - 1);
+                    int has_selection = 0;
+                    for (int i = 0; i < browser.file_count; i++) {
+                        if (browser.selection_mask[i]) { has_selection = 1; break; }
+                    }
+                    if (!has_selection && browser.file_count > 0) {
+                        LanguageCode cl = language_get_current(&lang);
+                        const char *wmsg =
+                            (cl == LANG_IT) ? "Nessun file selezionato - uso file corrente" :
+                            (cl == LANG_ES) ? "Ninguno seleccionado - usando archivo actual" :
+                            (cl == LANG_FR) ? "Rien selectionne - fichier actuel utilise" :
+                            (cl == LANG_DE) ? "Nichts ausgewaehlt - aktuelle Datei wird verwendet" :
+                            "No selection - using current file";
+                        show_toast(wmsg, RGBA8(230, 126, 34, 255));
+                        browser.selection_mask[browser.selected_index] = 1;
+                    }
+                    compress_format_selected = 0;
+                    current_mode = MODE_COMPRESS_FORMAT_SELECT;
+                }
 
-                        const char *files_to_add[MAX_FILES];
-                        int files_to_add_count = 0;
-                        char file_paths[MAX_FILES][MAX_PATH];
+                int visible_files_zip = (510 - 134) / 22;
+                if (browser.selected_index < scroll_offset) scroll_offset = browser.selected_index;
+                if (browser.selected_index >= scroll_offset + visible_files_zip) {
+                    scroll_offset = browser.selected_index - visible_files_zip + 1;
+                }
+                break;
 
+            case MODE_COMPRESS_FORMAT_SELECT:
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (compress_format_selected > 0) compress_format_selected--;
+                    else compress_format_selected = 4;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (compress_format_selected < 4) compress_format_selected++;
+                    else compress_format_selected = 0;
+                } else if (pressed & SCE_CTRL_CROSS) {
+                    char archive_name[256] = {0};
+                    const char *extensions[] = {".zip", ".7z", ".tar", ".tar.gz", ".tar.bz2"};
+                    char prompt[128];
+                    snprintf(prompt, sizeof(prompt), "Enter archive name (%s will be added)", extensions[compress_format_selected]);
+                    
+                    if (get_ime_input(archive_name, 250, prompt, NULL) == 0 && strlen(archive_name) > 0) {
+                        char archive_path[MAX_PATH];
+                        strncpy(archive_path, browser.current_path, MAX_PATH - 1);
+                        archive_path[MAX_PATH - 1] = '\0';
+                        strncat(archive_path, archive_name, MAX_PATH - strlen(archive_path) - 10);
+                        strncat(archive_path, extensions[compress_format_selected], MAX_PATH - strlen(archive_path) - 1);
+                        
+                        strncpy(worker_args.dest, archive_path, sizeof(worker_args.dest) - 1);
+                        worker_args.dest[sizeof(worker_args.dest) - 1] = '\0';
+                        worker_args.mode = 4;
+                        worker_args.index = compress_format_selected;
+                        
+                        current_mode = MODE_EXTRACTING;
+                        extract_progress = 0;
+                    } else {
+                        current_mode = MODE_ZIP_CREATION;
+                    }
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_ZIP_CREATION;
+                }
+                break;
+
+            case MODE_TEXT_PREVIEW:
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (preview_scroll > 0) preview_scroll--;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    int visible_lines = (510 - 65) / 22;
+                    if (preview_scroll + visible_lines < preview_line_count) preview_scroll++;
+                } else if (pressed & SCE_CTRL_LEFT) {
+                    int visible_lines = (510 - 65) / 22;
+                    preview_scroll -= visible_lines;
+                    if (preview_scroll < 0) preview_scroll = 0;
+                } else if (pressed & SCE_CTRL_RIGHT) {
+                    int visible_lines = (510 - 65) / 22;
+                    preview_scroll += visible_lines;
+                    if (preview_scroll + visible_lines >= preview_line_count) {
+                        preview_scroll = preview_line_count - visible_lines;
+                        if (preview_scroll < 0) preview_scroll = 0;
+                    }
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_ARCHIVE_VIEW;
+                }
+                break;
+
+            case MODE_FTP_SERVER:
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    ftp_server_stop();
+                    current_mode = MODE_BROWSER;
+                    filebrowser_refresh(&browser);
+                }
+                break;
+            
+            case MODE_ACTIONS_MENU:
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (actions_menu_selected > 0) actions_menu_selected--;
+                    else actions_menu_selected = 10;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (actions_menu_selected < 10) actions_menu_selected++;
+                    else actions_menu_selected = 0;
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_BROWSER;
+                } else if (pressed & SCE_CTRL_CROSS) {
+                    if (actions_menu_selected == 0) {
+                        clipboard_file_count = 0;
+                        int has_sel = 0;
                         for (int i = 0; i < browser.file_count; i++) {
                             if (browser.selection_mask[i]) {
-                                strncpy(file_paths[files_to_add_count], browser.current_path, MAX_PATH - 1);
-                                file_paths[files_to_add_count][MAX_PATH - 1] = '\0';
-                                strncat(file_paths[files_to_add_count], browser.files[i].name, MAX_PATH - strlen(file_paths[files_to_add_count]) - 1);
-                                files_to_add[files_to_add_count] = file_paths[files_to_add_count];
-                                files_to_add_count++;
+                                snprintf(clipboard_paths[clipboard_file_count], sizeof(clipboard_paths[0]), "%s/%s", browser.current_path, browser.files[i].name);
+                                clipboard_file_count++;
+                                has_sel = 1;
                             }
                         }
-                        zip_create(zip_path, files_to_add, files_to_add_count);
+                        if (!has_sel && browser.file_count > 0) {
+                            snprintf(clipboard_paths[0], sizeof(clipboard_paths[0]), "%s/%s", browser.current_path, browser.files[browser.selected_index].name);
+                            clipboard_file_count = 1;
+                        }
+                        clipboard_is_move = 0;
+                        show_toast(language_get(&lang, STR_TOAST_COPIED), RGBA8(52, 152, 219, 255));
                         current_mode = MODE_BROWSER;
-                        filebrowser_refresh(&browser);
+                    } else if (actions_menu_selected == 1) {
+                        clipboard_file_count = 0;
+                        int has_sel = 0;
+                        for (int i = 0; i < browser.file_count; i++) {
+                            if (browser.selection_mask[i]) {
+                                snprintf(clipboard_paths[clipboard_file_count], sizeof(clipboard_paths[0]), "%s/%s", browser.current_path, browser.files[i].name);
+                                clipboard_file_count++;
+                                has_sel = 1;
+                            }
+                        }
+                        if (!has_sel && browser.file_count > 0) {
+                            snprintf(clipboard_paths[0], sizeof(clipboard_paths[0]), "%s/%s", browser.current_path, browser.files[browser.selected_index].name);
+                            clipboard_file_count = 1;
+                        }
+                        clipboard_is_move = 1;
+                        show_toast(language_get(&lang, STR_TOAST_CUT), RGBA8(52, 152, 219, 255));
+                        current_mode = MODE_BROWSER;
+                    } else if (actions_menu_selected == 2) {
+                        if (clipboard_file_count > 0) {
+                            strncpy(extraction_dest_path, browser.current_path, sizeof(extraction_dest_path) - 1);
+                            extraction_dest_path[sizeof(extraction_dest_path) - 1] = '\0';
+                            
+                            worker_args.mode = 6;
+                            strncpy(worker_args.dest, extraction_dest_path, sizeof(worker_args.dest) - 1);
+                            worker_args.dest[sizeof(worker_args.dest) - 1] = '\0';
+                            
+                            current_mode = MODE_EXTRACTING;
+                            extract_progress = 0;
+                        }
+                    } else if (actions_menu_selected == 3) {
+                        if (browser.file_count > 0) {
+                            char new_name[256] = {0};
+                            const char *old_name = browser.files[browser.selected_index].name;
+                            const char *title = language_get(&lang, STR_RENAME);
+                            if (get_ime_input(new_name, 250, title, old_name) == 0 && strlen(new_name) > 0) {
+                                char old_path[1024], new_path[1024];
+                                snprintf(old_path, sizeof(old_path), "%s/%s", browser.current_path, old_name);
+                                snprintf(new_path, sizeof(new_path), "%s/%s", browser.current_path, new_name);
+                                int res = sceIoRename(old_path, new_path);
+                                if (res >= 0) {
+                                    show_toast(language_get(&lang, STR_TOAST_RENAME_SUCCESS), RGBA8(46, 204, 113, 255));
+                                } else {
+                                    show_toast(language_get(&lang, STR_TOAST_RENAME_FAIL), RGBA8(231, 76, 60, 255));
+                                }
+                                filebrowser_refresh(&browser);
+                            }
+                        }
+                        current_mode = MODE_BROWSER;
+                    } else if (actions_menu_selected == 4) {
+                        char folder_name[256] = {0};
+                        const char *title = language_get(&lang, STR_NEW_FOLDER);
+                        if (get_ime_input(folder_name, 250, title, NULL) == 0 && strlen(folder_name) > 0) {
+                            char folder_path[1024];
+                            snprintf(folder_path, sizeof(folder_path), "%s/%s", browser.current_path, folder_name);
+                            int res = sceIoMkdir(folder_path, 0777);
+                            if (res >= 0) {
+                                show_toast(language_get(&lang, STR_TOAST_FOLDER_SUCCESS), RGBA8(46, 204, 113, 255));
+                            } else {
+                                show_toast(language_get(&lang, STR_TOAST_FOLDER_FAIL), RGBA8(231, 76, 60, 255));
+                            }
+                            filebrowser_refresh(&browser);
+                        }
+                        current_mode = MODE_BROWSER;
+                    } else if (actions_menu_selected == 5) {
+                        const char *title = language_get(&lang, STR_SEARCH);
+                        if (get_ime_input(browser.search_query, 120, title, NULL) == 0) {
+                            filebrowser_refresh(&browser);
+                        }
+                        current_mode = MODE_BROWSER;
+                    } else if (actions_menu_selected == 6) {
+                        current_mode = MODE_ZIP_CREATION;
+                        memset(browser.selection_mask, 0, sizeof(browser.selection_mask));
+                    } else if (actions_menu_selected == 7) {
+                        if (browser.file_count > 0) {
+                            current_mode = MODE_DELETE_CONFIRM;
+                        } else {
+                            current_mode = MODE_BROWSER;
+                        }
+                    } else if (actions_menu_selected == 8) {
+                        if (browser.file_count > 0) {
+                            int is_dir = browser.files[browser.selected_index].is_directory;
+                            if (!is_dir) {
+                                snprintf(hash_filepath, sizeof(hash_filepath), "%s/%s", browser.current_path, browser.files[browser.selected_index].name);
+                                hash_progress = 0;
+                                hash_cancel = 0;
+                                hash_md5[0] = '\0';
+                                hash_sha256[0] = '\0';
+                                current_mode = MODE_HASH_VIEW;
+                                
+                                worker_args.mode = 8;
+                                worker_thread_id = sceKernelCreateThread("hash_worker", worker_thread_func, 0x10000100, 0x10000, 0, 0, NULL);
+                                if (worker_thread_id >= 0) {
+                                    sceKernelStartThread(worker_thread_id, sizeof(worker_args), &worker_args);
+                                }
+                            } else {
+                                current_mode = MODE_BROWSER;
+                            }
+                        } else {
+                            current_mode = MODE_BROWSER;
+                        }
+                    } else if (actions_menu_selected == 9) {
+                        if (browser.file_count > 0) {
+                            int is_dir = browser.files[browser.selected_index].is_directory;
+                            if (!is_dir) {
+                                snprintf(hex_filepath, sizeof(hex_filepath), "%s/%s", browser.current_path, browser.files[browser.selected_index].name);
+                                hex_offset = 0;
+                                hex_file_size = browser.files[browser.selected_index].size;
+                                current_mode = MODE_HEX_VIEW;
+                            } else {
+                                current_mode = MODE_BROWSER;
+                            }
+                        } else {
+                            current_mode = MODE_BROWSER;
+                        }
+                    } else if (actions_menu_selected == 10) {
+                        if (browser.file_count > 0) {
+                            snprintf(prop_filepath, sizeof(prop_filepath), "%s/%s", browser.current_path, browser.files[browser.selected_index].name);
+                            memset(&prop_stat, 0, sizeof(prop_stat));
+                            if (sceIoGetstat(prop_filepath, &prop_stat) >= 0) {
+                                prop_selected_row = 0;
+                                prop_checkboxes[0] = (prop_stat.st_attr & 0x01) ? 1 : 0;
+                                prop_checkboxes[1] = (prop_stat.st_attr & 0x02) ? 1 : 0;
+                                prop_checkboxes[2] = (prop_stat.st_attr & 0x04) ? 1 : 0;
+                                prop_checkboxes[3] = (prop_stat.st_mode & 0400) ? 1 : 0;
+                                prop_checkboxes[4] = (prop_stat.st_mode & 0200) ? 1 : 0;
+                                prop_checkboxes[5] = (prop_stat.st_mode & 0100) ? 1 : 0;
+                                current_mode = MODE_PROPERTIES_VIEW;
+                            } else {
+                                current_mode = MODE_BROWSER;
+                            }
+                        } else {
+                            current_mode = MODE_BROWSER;
+                        }
                     }
+                }
+                break;
+                
+            case MODE_ARCHIVE_ACTIONS_MENU:
+                if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (archive_actions_selected > 0) archive_actions_selected--;
+                    else archive_actions_selected = 2;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (archive_actions_selected < 2) archive_actions_selected++;
+                    else archive_actions_selected = 0;
+                } else if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_ARCHIVE_VIEW;
+                } else if (pressed & SCE_CTRL_CROSS) {
+                    if (archive_actions_selected == 0) {
+                        int has_sel = 0;
+                        for (int i = 0; i < archive_info.file_count; i++) {
+                            if (archive_selection_mask[i]) { has_sel = 1; break; }
+                        }
+                        if (!has_sel && archive_info.file_count > 0) {
+                            archive_selection_mask[archive_selected] = 1;
+                        }
+                        extract_selected_only = 2;
+                        current_mode = MODE_DEST_BROWSER;
+                        filebrowser_init(&browser, "ux0:/");
+                        scroll_offset = 0;
+                    } else if (archive_actions_selected == 1) {
+                        extract_selected_only = 0;
+                        current_mode = MODE_DEST_BROWSER;
+                        filebrowser_init(&browser, "ux0:/");
+                        scroll_offset = 0;
+                    } else if (archive_actions_selected == 2) {
+                        worker_args.mode = 5;
+                        current_mode = MODE_EXTRACTING;
+                        extract_progress = 0;
+                    }
+                }
+                break;
+            case MODE_INTEGRITY_RESULT:
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_ARCHIVE_VIEW;
+                }
+                break;
+                
+            case MODE_HASH_VIEW:
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    if (hash_progress < 100) {
+                        hash_cancel = 1;
+                    }
+                    current_mode = MODE_BROWSER;
+                } else if (pressed & SCE_CTRL_CROSS) {
+                    if (hash_progress == 100) {
+                        sceIoMkdir("ux0:/data/VitaArchive", 0777);
+                        SceUID fd = sceIoOpen("ux0:/data/VitaArchive/hash_report.txt", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+                        if (fd >= 0) {
+                            char r_buf[2048];
+                            snprintf(r_buf, sizeof(r_buf), "File: %s\r\nMD5: %s\r\nSHA-256: %s\r\n", hash_filepath, hash_md5, hash_sha256);
+                            sceIoWrite(fd, r_buf, strlen(r_buf));
+                            sceIoClose(fd);
+                            LanguageCode cl = language_get_current(&lang);
+                            if (cl == LANG_IT) show_toast("Report hash salvato!", RGBA8(46, 204, 113, 255));
+                            else if (cl == LANG_ES) show_toast("Reporte de hash guardado!", RGBA8(46, 204, 113, 255));
+                            else if (cl == LANG_FR) show_toast("Rapport de hash enregistre!", RGBA8(46, 204, 113, 255));
+                            else if (cl == LANG_DE) show_toast("Hash-Bericht gespeichert!", RGBA8(46, 204, 113, 255));
+                            else if (cl == LANG_JPN) show_toast("ハッシュレポートが保存されました！", RGBA8(46, 204, 113, 255));
+                            else show_toast("Hash report saved!", RGBA8(46, 204, 113, 255));
+                        } else {
+                            LanguageCode cl = language_get_current(&lang);
+                            if (cl == LANG_IT) show_toast("Errore salvataggio report", RGBA8(231, 76, 60, 255));
+                            else if (cl == LANG_ES) show_toast("Error al guardar el reporte", RGBA8(231, 76, 60, 255));
+                            else if (cl == LANG_FR) show_toast("Erreur d'enregistrement", RGBA8(231, 76, 60, 255));
+                            else if (cl == LANG_DE) show_toast("Fehler beim Speichern des Berichts", RGBA8(231, 76, 60, 255));
+                            else if (cl == LANG_JPN) show_toast("レポートの保存に失敗しました", RGBA8(231, 76, 60, 255));
+                            else show_toast("Failed to save report", RGBA8(231, 76, 60, 255));
+                        }
+                    }
+                }
+                break;
+                
+            case MODE_HEX_VIEW:
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    current_mode = MODE_BROWSER;
+                } else if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (hex_offset >= 16) {
+                        hex_offset -= 16;
+                    }
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (hex_offset + 16 < hex_file_size) {
+                        hex_offset += 16;
+                    }
+                } else if (pressed & SCE_CTRL_LTRIGGER) {
+                    if (hex_offset >= 240) {
+                        hex_offset -= 240;
+                    } else {
+                        hex_offset = 0;
+                    }
+                } else if (pressed & SCE_CTRL_RTRIGGER) {
+                    if (hex_offset + 240 < hex_file_size) {
+                        hex_offset += 240;
+                    } else {
+                        uint32_t pages = hex_file_size / 240;
+                        hex_offset = pages * 240;
+                    }
+                }
+                break;
+                
+            case MODE_PROPERTIES_VIEW:
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    SceIoStat change_stat;
+                    memset(&change_stat, 0, sizeof(change_stat));
+                    
+                    uint32_t new_attr = 0;
+                    if (prop_checkboxes[0]) new_attr |= 0x01;
+                    if (prop_checkboxes[1]) new_attr |= 0x02;
+                    if (prop_checkboxes[2]) new_attr |= 0x04;
+                    change_stat.st_attr = new_attr;
+                    
+                    uint32_t new_mode = prop_stat.st_mode & ~0700;
+                    if (prop_checkboxes[3]) new_mode |= 0400;
+                    if (prop_checkboxes[4]) new_mode |= 0200;
+                    if (prop_checkboxes[5]) new_mode |= 0100;
+                    change_stat.st_mode = new_mode;
+                    
+                    sceIoChstat(prop_filepath, &change_stat, 0x0001 | 0x0002);
+                    filebrowser_refresh(&browser);
+                    current_mode = MODE_BROWSER;
+                } else if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                    if (prop_selected_row > 0) prop_selected_row--;
+                    else prop_selected_row = 5;
+                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                    if (prop_selected_row < 5) prop_selected_row++;
+                    else prop_selected_row = 0;
+                } else if (pressed & SCE_CTRL_CROSS) {
+                    prop_checkboxes[prop_selected_row] = !prop_checkboxes[prop_selected_row];
                 }
                 break;
         }
@@ -923,7 +1554,40 @@ int main() {
             case MODE_SMART_INSTALL_CONFIRM:
                 draw_smart_install_confirm();
                 break;
+            case MODE_DELETE_CONFIRM:
+                draw_delete_confirm();
+                break;
+            case MODE_COMPRESS_FORMAT_SELECT:
+                draw_compress_format_select();
+                break;
+            case MODE_TEXT_PREVIEW:
+                draw_text_preview();
+                break;
+            case MODE_FTP_SERVER:
+                draw_ftp_server();
+                break;
+            case MODE_ACTIONS_MENU:
+                draw_actions_menu();
+                break;
+            case MODE_ARCHIVE_ACTIONS_MENU:
+                draw_archive_actions_menu();
+                break;
+            case MODE_INTEGRITY_RESULT:
+                draw_integrity_result();
+                break;
+            case MODE_HASH_VIEW:
+                draw_hash_view();
+                break;
+            case MODE_HEX_VIEW:
+                draw_hex_view();
+                break;
+            case MODE_PROPERTIES_VIEW:
+                draw_properties_view();
+                break;
         }
+        
+        draw_battery_status();
+        draw_toast();
         
         vita2d_end_drawing();
         vita2d_swap_buffers();
@@ -934,6 +1598,8 @@ int main() {
     vpk_cleanup_dirs();
     vita2d_free_pgf(font);
     sceSysmoduleUnloadModule(SCE_SYSMODULE_IME);
+    scePromoterUtilityExit();
+    sceSysmoduleUnloadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
     vita2d_fini();
     return 0;
 }

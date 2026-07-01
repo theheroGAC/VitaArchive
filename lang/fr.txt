@@ -38,6 +38,11 @@ Sélectionner le dossier de destination
 Confirmer la destination
 Créer ZIP
 Sélectionner/Désélectionner
+Extraire le fichier
+Supprimer le ZIP
+Supprimer
+Supprimer le fichier ZIP selectionne ?
+Saisir le mot de passe du ZIP
 Nom
 Type
 Dossier
@@ -51,3 +56,27 @@ Installer cette archive comme application PSVita ?
 Installation de l'application
 Application installée avec succès
 Échec de l'installation de l'application
+Actions
+Copier
+Couper
+Coller
+Renommer
+Nouveau Dossier
+Rechercher
+Créer une archive (ZIP/7z/...)
+Tester l'integrite
+Extraire la selection
+Copie dans le presse-papiers !
+Coupe dans le presse-papiers !
+Operation terminee !
+Echec de l'operation
+Renomme avec succes !
+Echec du renommage
+Dossier cree !
+Echec de la creation du dossier
+Test d'integrite reussi !
+Test d'integrite echoue !
+L'archive est intacte et ne contient pas d'erreurs.
+L'archive est corrompue ou incomplete.
+Saisir le mot de passe de l'archive
+Impossible d'ouvrir l'archive

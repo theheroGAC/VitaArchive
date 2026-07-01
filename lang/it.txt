@@ -56,3 +56,27 @@ Installare questo archivio come applicazione PSVita?
 Installazione applicazione
 Applicazione installata con successo
 Installazione applicazione fallita
+Azioni
+Copia
+Taglia
+Incolla
+Rinomina
+Nuova Cartella
+Cerca
+Crea Archivio (ZIP/7z/...)
+Verifica Integrita'
+Estrai Selezionati
+Copiato in memoria!
+Tagliato in memoria!
+Operazione completata!
+Errore operazione
+Rinominato con successo!
+Errore rinomina
+Cartella creata!
+Errore creazione cartella
+Test di integrita' superato!
+Test di integrita' fallito!
+L'archivio e' integro e non presenta errori.
+L'archivio e' corrotto o incompleto.
+Inserisci Password Archivio
+Impossibile aprire l'archivio
