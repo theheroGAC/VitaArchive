@@ -47,5 +47,7 @@ int is_7z_file(const char *path);
 int is_tar_file(const char *path);
 int is_gzip_file(const char *path);
 int is_bzip2_file(const char *path);
+struct archive;
+int open_archive_read(struct archive *a, const char *path);
 
 #endif

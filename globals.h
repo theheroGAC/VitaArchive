@@ -124,4 +124,8 @@ extern SceIoStat prop_stat;
 extern int prop_selected_row;
 extern int prop_checkboxes[6];
 
+extern char preview_filepath[1024];
+extern int preview_selected_line;
+extern int preview_is_sfo;
+
 #endif

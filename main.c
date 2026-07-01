@@ -118,7 +118,6 @@ static void utf16_to_utf8(uint8_t *dst, uint32_t dst_max_bytes, const uint16_t *
 #include "psarc.h"
 #include "ftp.h"
 
-
 #define SFO_MAGIC 0x46535000
 
 typedef struct SfoHeader {
@@ -139,6 +138,7 @@ typedef struct SfoEntry {
 } __attribute__((packed)) SfoEntry;
 
 AppMode current_mode = MODE_BROWSER;
+AppMode preview_return_mode = MODE_ARCHIVE_VIEW;
 FileBrowser browser;
 ArchiveInfo archive_info;
 int extract_progress = 0;
@@ -191,11 +191,9 @@ uint32_t toast_color = 0;
 char ftp_ip[32] = {0};
 unsigned short ftp_port = 0;
 
-
 uint32_t hex_offset = 0;
 uint64_t hex_file_size = 0;
 char hex_filepath[1024] = {0};
-
 
 char hash_md5[33] = {0};
 char hash_sha256[65] = {0};
@@ -209,6 +207,12 @@ SceIoStat prop_stat;
 int prop_selected_row = 0;
 int prop_checkboxes[6] = {0};
 
+char preview_filepath[1024] = {0};
+int preview_selected_line = 0;
+int preview_is_sfo = 0;
+void *sfo_buffer = NULL;
+int sfo_buffer_size = 0;
+
 
 
 
@@ -216,6 +220,10 @@ int prop_checkboxes[6] = {0};
 static void load_preview_file(const char *path) {
     preview_line_count = 0;
     preview_scroll = 0;
+    preview_selected_line = 0;
+    preview_is_sfo = 0;
+    strncpy(preview_filepath, path, sizeof(preview_filepath) - 1);
+    preview_filepath[sizeof(preview_filepath) - 1] = '\0';
     
     SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
     if (fd < 0) return;
@@ -257,52 +265,73 @@ static void load_preview_file(const char *path) {
     }
     
     sceIoClose(fd);
-    sceIoRemove(path);
+    if (strncmp(path, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) == 0) {
+        sceIoRemove(path);
+    }
 }
 
 static void load_sfo_preview(const char *path) {
     preview_line_count = 0;
     preview_scroll = 0;
+    preview_selected_line = 0;
+    preview_is_sfo = 1;
+    strncpy(preview_filepath, path, sizeof(preview_filepath) - 1);
+    preview_filepath[sizeof(preview_filepath) - 1] = '\0';
+    
+    if (sfo_buffer) {
+        free(sfo_buffer);
+        sfo_buffer = NULL;
+    }
     
     SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
     if (fd < 0) return;
     
-    int size = sceIoLseek(fd, 0, SCE_SEEK_END);
+    sfo_buffer_size = sceIoLseek(fd, 0, SCE_SEEK_END);
     sceIoLseek(fd, 0, SCE_SEEK_SET);
     
-    if (size <= (int)sizeof(SfoHeader)) {
+    if (sfo_buffer_size <= (int)sizeof(SfoHeader)) {
         sceIoClose(fd);
-        sceIoRemove(path);
+        if (strncmp(path, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) == 0) {
+            sceIoRemove(path);
+        }
         return;
     }
     
-    void *buf = malloc(size);
-    if (!buf) {
+    sfo_buffer = malloc(sfo_buffer_size);
+    if (!sfo_buffer) {
         sceIoClose(fd);
-        sceIoRemove(path);
+        if (strncmp(path, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) == 0) {
+            sceIoRemove(path);
+        }
         return;
     }
     
-    if (sceIoRead(fd, buf, size) != size) {
-        free(buf);
+    if (sceIoRead(fd, sfo_buffer, sfo_buffer_size) != sfo_buffer_size) {
+        free(sfo_buffer);
+        sfo_buffer = NULL;
         sceIoClose(fd);
-        sceIoRemove(path);
+        if (strncmp(path, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) == 0) {
+            sceIoRemove(path);
+        }
         return;
     }
     sceIoClose(fd);
-    sceIoRemove(path);
+    if (strncmp(path, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) == 0) {
+        sceIoRemove(path);
+    }
     
-    SfoHeader *header = (SfoHeader*)buf;
-    SfoEntry *entries = (SfoEntry*)((uintptr_t)buf + sizeof(SfoHeader));
+    SfoHeader *header = (SfoHeader*)sfo_buffer;
+    SfoEntry *entries = (SfoEntry*)((uintptr_t)sfo_buffer + sizeof(SfoHeader));
     
     if (header->magic != SFO_MAGIC) {
-        free(buf);
+        free(sfo_buffer);
+        sfo_buffer = NULL;
         return;
     }
     
     for (int i = 0; i < (int)header->count && preview_line_count < MAX_PREVIEW_LINES; i++) {
-        const char *key = (const char *)buf + header->keyofs + entries[i].nameofs;
-        const char *val = (const char *)buf + header->valofs + entries[i].dataofs;
+        const char *key = (const char *)sfo_buffer + header->keyofs + entries[i].nameofs;
+        const char *val = (const char *)sfo_buffer + header->valofs + entries[i].dataofs;
         
         char line_buf[MAX_PREVIEW_LINE_LEN];
         if (entries[i].type == 2) {
@@ -318,8 +347,6 @@ static void load_sfo_preview(const char *path) {
         preview_lines[preview_line_count][MAX_PREVIEW_LINE_LEN - 1] = '\0';
         preview_line_count++;
     }
-    
-    free(buf);
 }
 
 static int try_open_archive(const char *path, ArchiveInfo *info) {
@@ -664,17 +691,31 @@ int main() {
                     } else if (result == 1) {
                         const char *selected = filebrowser_get_selected_path(&browser);
                         if (selected) {
-                            int open_res = try_open_archive_with_password(selected, &archive_info);
-
-                            if (open_res >= 0) {
-                                current_mode = MODE_ARCHIVE_VIEW;
-                                archive_scroll = 0;
-                                archive_selected = 0;
-                                archive_stack_depth = 1;
-                                strncpy(archive_stack[0], selected, MAX_PATH - 1);
-                                archive_stack[0][MAX_PATH - 1] = '\0';
+                            const char *file_ext = strrchr(selected, '.');
+                            int is_sfo = file_ext && strcasecmp(file_ext, ".sfo") == 0;
+                            int is_txt = is_viewable_text_file(selected);
+                            if (is_sfo || is_txt) {
+                                if (is_sfo) {
+                                    load_sfo_preview(selected);
+                                } else {
+                                    load_preview_file(selected);
+                                }
+                                current_mode = MODE_TEXT_PREVIEW;
+                                preview_return_mode = MODE_BROWSER;
+                                strncpy(preview_filename, path_basename(selected), sizeof(preview_filename) - 1);
+                                preview_filename[sizeof(preview_filename) - 1] = '\0';
                             } else {
-                                show_toast(language_get(&lang, STR_CANNOT_OPEN), RGBA8(231, 76, 60, 255));
+                                int open_res = try_open_archive_with_password(selected, &archive_info);
+                                if (open_res >= 0) {
+                                    current_mode = MODE_ARCHIVE_VIEW;
+                                    archive_scroll = 0;
+                                    archive_selected = 0;
+                                    archive_stack_depth = 1;
+                                    strncpy(archive_stack[0], selected, MAX_PATH - 1);
+                                    archive_stack[0][MAX_PATH - 1] = '\0';
+                                } else {
+                                    show_toast(language_get(&lang, STR_CANNOT_OPEN), RGBA8(231, 76, 60, 255));
+                                }
                             }
                         }
                     }
@@ -1172,11 +1213,27 @@ int main() {
                     snprintf(prompt, sizeof(prompt), "Enter archive name (%s will be added)", extensions[compress_format_selected]);
                     
                     if (get_ime_input(archive_name, 250, prompt, NULL) == 0 && strlen(archive_name) > 0) {
-                        char archive_path[MAX_PATH];
-                        strncpy(archive_path, browser.current_path, MAX_PATH - 1);
-                        archive_path[MAX_PATH - 1] = '\0';
-                        strncat(archive_path, archive_name, MAX_PATH - strlen(archive_path) - 10);
-                        strncat(archive_path, extensions[compress_format_selected], MAX_PATH - strlen(archive_path) - 1);
+                        char archive_path[1024];
+                        char base_path[512];
+                        
+                        strncpy(base_path, browser.current_path, MAX_PATH - 1);
+                        base_path[MAX_PATH - 1] = '\0';
+                        strncat(base_path, archive_name, MAX_PATH - strlen(base_path) - 16);
+                        
+                        int counter = 0;
+                        while (1) {
+                            if (counter == 0) {
+                                snprintf(archive_path, sizeof(archive_path), "%s%s", base_path, extensions[compress_format_selected]);
+                            } else {
+                                snprintf(archive_path, sizeof(archive_path), "%s (%d)%s", base_path, counter, extensions[compress_format_selected]);
+                            }
+                            
+                            SceIoStat stat;
+                            if (sceIoGetstat(archive_path, &stat) < 0) {
+                                break;
+                            }
+                            counter++;
+                        }
                         
                         strncpy(worker_args.dest, archive_path, sizeof(worker_args.dest) - 1);
                         worker_args.dest[sizeof(worker_args.dest) - 1] = '\0';
@@ -1194,24 +1251,118 @@ int main() {
                 break;
 
             case MODE_TEXT_PREVIEW:
-                if ((pressed | repeat_event) & SCE_CTRL_UP) {
-                    if (preview_scroll > 0) preview_scroll--;
-                } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                {
                     int visible_lines = (510 - 65) / 22;
-                    if (preview_scroll + visible_lines < preview_line_count) preview_scroll++;
-                } else if (pressed & SCE_CTRL_LEFT) {
-                    int visible_lines = (510 - 65) / 22;
-                    preview_scroll -= visible_lines;
-                    if (preview_scroll < 0) preview_scroll = 0;
-                } else if (pressed & SCE_CTRL_RIGHT) {
-                    int visible_lines = (510 - 65) / 22;
-                    preview_scroll += visible_lines;
-                    if (preview_scroll + visible_lines >= preview_line_count) {
-                        preview_scroll = preview_line_count - visible_lines;
+                    int preview_is_local = (strncmp(preview_filepath, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) != 0);
+                    
+                    if ((pressed | repeat_event) & SCE_CTRL_UP) {
+                        if (preview_selected_line > 0) {
+                            preview_selected_line--;
+                            if (preview_selected_line < preview_scroll) {
+                                preview_scroll = preview_selected_line;
+                            }
+                        }
+                    } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
+                        if (preview_selected_line < preview_line_count - 1) {
+                            preview_selected_line++;
+                            if (preview_selected_line >= preview_scroll + visible_lines) {
+                                preview_scroll = preview_selected_line - visible_lines + 1;
+                            }
+                        }
+                    } else if (pressed & SCE_CTRL_LEFT) {
+                        preview_selected_line -= visible_lines;
+                        if (preview_selected_line < 0) preview_selected_line = 0;
+                        preview_scroll -= visible_lines;
                         if (preview_scroll < 0) preview_scroll = 0;
+                    } else if (pressed & SCE_CTRL_RIGHT) {
+                        preview_selected_line += visible_lines;
+                        if (preview_selected_line >= preview_line_count) preview_selected_line = preview_line_count - 1;
+                        if (preview_selected_line < 0) preview_selected_line = 0;
+                        preview_scroll += visible_lines;
+                        if (preview_scroll + visible_lines >= preview_line_count) {
+                            preview_scroll = preview_line_count - visible_lines;
+                            if (preview_scroll < 0) preview_scroll = 0;
+                        }
+                    } else if (pressed & SCE_CTRL_CIRCLE) {
+                        current_mode = preview_return_mode;
+                        if (sfo_buffer) {
+                            free(sfo_buffer);
+                            sfo_buffer = NULL;
+                        }
+                    } else if (pressed & SCE_CTRL_CROSS) {
+                        if (preview_is_local && preview_line_count > 0) {
+                            if (preview_is_sfo) {
+                                SfoHeader *header = (SfoHeader*)sfo_buffer;
+                                SfoEntry *entries = (SfoEntry*)((uintptr_t)sfo_buffer + sizeof(SfoHeader));
+                                int idx = preview_selected_line;
+                                if (idx >= 0 && idx < (int)header->count) {
+                                    const char *key = (const char *)sfo_buffer + header->keyofs + entries[idx].nameofs;
+                                    char *val = (char *)sfo_buffer + header->valofs + entries[idx].dataofs;
+                                    
+                                    if (entries[idx].type == 2) {
+                                        char new_val[256];
+                                        memset(new_val, 0, sizeof(new_val));
+                                        if (get_ime_input(new_val, entries[idx].totalsize - 1, key, val) == 0) {
+                                            strncpy(val, new_val, entries[idx].totalsize - 1);
+                                            val[entries[idx].totalsize - 1] = '\0';
+                                            snprintf(preview_lines[idx], MAX_PREVIEW_LINE_LEN, "%s: %s", key, val);
+                                        }
+                                    } else if (entries[idx].type == 4) {
+                                        char new_val[32];
+                                        memset(new_val, 0, sizeof(new_val));
+                                        uint32_t current_int = *(uint32_t*)val;
+                                        char initial_txt[32];
+                                        snprintf(initial_txt, sizeof(initial_txt), "%u", current_int);
+                                        if (get_ime_input(new_val, 10, key, initial_txt) == 0) {
+                                            uint32_t parsed_int = (uint32_t)strtoul(new_val, NULL, 10);
+                                            *(uint32_t*)val = parsed_int;
+                                            snprintf(preview_lines[idx], MAX_PREVIEW_LINE_LEN, "%s: %u (0x%08X)", key, parsed_int, parsed_int);
+                                        }
+                                    }
+                                }
+                            } else {
+                                char edited_line[MAX_PREVIEW_LINE_LEN];
+                                memset(edited_line, 0, sizeof(edited_line));
+                                if (get_ime_input(edited_line, MAX_PREVIEW_LINE_LEN - 1, "Edit Line", preview_lines[preview_selected_line]) == 0) {
+                                    strncpy(preview_lines[preview_selected_line], edited_line, MAX_PREVIEW_LINE_LEN - 1);
+                                    preview_lines[preview_selected_line][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+                                }
+                            }
+                        }
+                    } else if (pressed & SCE_CTRL_TRIANGLE) {
+                        if (preview_is_local && preview_line_count > 0) {
+                            if (preview_is_sfo) {
+                                SceUID fd_out = sceIoOpen(preview_filepath, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+                                if (fd_out >= 0) {
+                                    sceIoWrite(fd_out, sfo_buffer, sfo_buffer_size);
+                                    sceIoClose(fd_out);
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "File SFO salvato!" : "SFO file saved!";
+                                    show_toast(msg, RGBA8(46, 204, 113, 255));
+                                } else {
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "Errore salvataggio!" : "Error saving file!";
+                                    show_toast(msg, RGBA8(231, 76, 60, 255));
+                                }
+                            } else {
+                                SceUID fd_out = sceIoOpen(preview_filepath, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+                                if (fd_out >= 0) {
+                                    for (int i = 0; i < preview_line_count; i++) {
+                                        sceIoWrite(fd_out, preview_lines[i], strlen(preview_lines[i]));
+                                        sceIoWrite(fd_out, "\r\n", 2);
+                                    }
+                                    sceIoClose(fd_out);
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "File salvato!" : "File saved!";
+                                    show_toast(msg, RGBA8(46, 204, 113, 255));
+                                } else {
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "Errore salvataggio!" : "Error saving file!";
+                                    show_toast(msg, RGBA8(231, 76, 60, 255));
+                                }
+                            }
+                        }
                     }
-                } else if (pressed & SCE_CTRL_CIRCLE) {
-                    current_mode = MODE_ARCHIVE_VIEW;
                 }
                 break;
 
@@ -1226,9 +1377,9 @@ int main() {
             case MODE_ACTIONS_MENU:
                 if ((pressed | repeat_event) & SCE_CTRL_UP) {
                     if (actions_menu_selected > 0) actions_menu_selected--;
-                    else actions_menu_selected = 10;
+                    else actions_menu_selected = 11;
                 } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
-                    if (actions_menu_selected < 10) actions_menu_selected++;
+                    if (actions_menu_selected < 11) actions_menu_selected++;
                     else actions_menu_selected = 0;
                 } else if (pressed & SCE_CTRL_CIRCLE) {
                     current_mode = MODE_BROWSER;
@@ -1377,6 +1528,31 @@ int main() {
                                 prop_checkboxes[4] = (prop_stat.st_mode & 0200) ? 1 : 0;
                                 prop_checkboxes[5] = (prop_stat.st_mode & 0100) ? 1 : 0;
                                 current_mode = MODE_PROPERTIES_VIEW;
+                            } else {
+                                current_mode = MODE_BROWSER;
+                            }
+                        } else {
+                            current_mode = MODE_BROWSER;
+                        }
+                    } else if (actions_menu_selected == 11) {
+                        if (browser.file_count > 0) {
+                            int is_dir = browser.files[browser.selected_index].is_directory;
+                            const char *name = browser.files[browser.selected_index].name;
+                            const char *ext = strrchr(name, '.');
+                            int is_sfo = ext && strcasecmp(ext, ".sfo") == 0;
+                            int is_txt = is_viewable_text_file(name);
+                            if (!is_dir && (is_sfo || is_txt)) {
+                                char filepath[1024];
+                                snprintf(filepath, sizeof(filepath), "%s/%s", browser.current_path, name);
+                                if (is_sfo) {
+                                    load_sfo_preview(filepath);
+                                } else {
+                                    load_preview_file(filepath);
+                                }
+                                current_mode = MODE_TEXT_PREVIEW;
+                                preview_return_mode = MODE_BROWSER;
+                                strncpy(preview_filename, name, sizeof(preview_filename) - 1);
+                                preview_filename[sizeof(preview_filename) - 1] = '\0';
                             } else {
                                 current_mode = MODE_BROWSER;
                             }

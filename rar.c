@@ -49,7 +49,7 @@ int rar_open(const char *rar_path, ArchiveInfo *info) {
         archive_read_add_passphrase(rar_archive, info->password);
     }
     
-    if (archive_read_open_filename(rar_archive, rar_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(rar_archive, rar_path) != ARCHIVE_OK) {
         archive_read_free(rar_archive);
         rar_archive = NULL;
         return -1;
@@ -72,7 +72,7 @@ int rar_list_files(ArchiveInfo *info) {
         archive_read_add_passphrase(a, info->password);
     }
     
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
@@ -153,7 +153,7 @@ int rar_extract_all(const char *dest, ArchiveInfo *info, int *progress) {
         archive_read_add_passphrase(a, info->password);
     }
     
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
@@ -211,7 +211,7 @@ int rar_extract_file(const char *dest, int file_index, ArchiveInfo *info) {
         archive_read_add_passphrase(a, info->password);
     }
 
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }

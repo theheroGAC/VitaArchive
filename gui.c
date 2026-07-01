@@ -946,22 +946,75 @@ void draw_text_preview() {
         int line_idx = preview_scroll + i;
         if (line_idx >= preview_line_count) break;
         
-        vita2d_pgf_draw_textf(font, 30, y + (i * 22), RGBA8(201, 209, 217, 255), 0.85f, "%s", 
-            preview_lines[line_idx]);
+        if (line_idx == preview_selected_line) {
+            vita2d_draw_rectangle(17, y + (i * 22) - 16, 926, 22, RGBA8(38, 44, 54, 255));
+            vita2d_pgf_draw_textf(font, 30, y + (i * 22), RGBA8(255, 255, 255, 255), 0.85f, "%s", 
+                preview_lines[line_idx]);
+        } else {
+            vita2d_pgf_draw_textf(font, 30, y + (i * 22), RGBA8(201, 209, 217, 255), 0.85f, "%s", 
+                preview_lines[line_idx]);
+        }
     }
 
     char scroll_str[64];
-    int line_end = preview_scroll + visible_lines;
-    if (line_end > preview_line_count) line_end = preview_line_count;
-    snprintf(scroll_str, sizeof(scroll_str), "Lines: %d-%d/%d", 
-        preview_line_count > 0 ? preview_scroll + 1 : 0, 
-        line_end,
-        preview_line_count);
+    LanguageCode cl = language_get_current(&lang);
+    if (cl == LANG_IT) {
+        snprintf(scroll_str, sizeof(scroll_str), "Riga: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    } else if (cl == LANG_ES) {
+        snprintf(scroll_str, sizeof(scroll_str), "Línea: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    } else if (cl == LANG_FR) {
+        snprintf(scroll_str, sizeof(scroll_str), "Ligne: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    } else if (cl == LANG_DE) {
+        snprintf(scroll_str, sizeof(scroll_str), "Zeile: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    } else if (cl == LANG_JPN) {
+        snprintf(scroll_str, sizeof(scroll_str), "行: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    } else {
+        snprintf(scroll_str, sizeof(scroll_str), "Line: %d/%d", 
+            preview_line_count > 0 ? preview_selected_line + 1 : 0, 
+            preview_line_count);
+    }
         
     char o_str[64];
     snprintf(o_str, sizeof(o_str), "O: %s", language_get(&lang, STR_BACK));
-    const char *actions[] = {o_str, scroll_str};
-    draw_footer(actions, 2);
+    
+    int preview_is_local = (strncmp(preview_filepath, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) != 0);
+    if (preview_is_local && preview_line_count > 0) {
+        char edit_str[64], save_str[64];
+        if (cl == LANG_IT) {
+            snprintf(edit_str, sizeof(edit_str), "X: Modifica");
+            snprintf(save_str, sizeof(save_str), "TRI: Salva");
+        } else if (cl == LANG_ES) {
+            snprintf(edit_str, sizeof(edit_str), "X: Editar");
+            snprintf(save_str, sizeof(save_str), "TRI: Guardar");
+        } else if (cl == LANG_FR) {
+            snprintf(edit_str, sizeof(edit_str), "X: Modifier");
+            snprintf(save_str, sizeof(save_str), "TRI: Sauvegarder");
+        } else if (cl == LANG_DE) {
+            snprintf(edit_str, sizeof(edit_str), "X: Bearbeiten");
+            snprintf(save_str, sizeof(save_str), "TRI: Speichern");
+        } else if (cl == LANG_JPN) {
+            snprintf(edit_str, sizeof(edit_str), "X: 編集");
+            snprintf(save_str, sizeof(save_str), "TRI: 保存");
+        } else {
+            snprintf(edit_str, sizeof(edit_str), "X: Edit");
+            snprintf(save_str, sizeof(save_str), "TRI: Save");
+        }
+        const char *actions[] = {o_str, edit_str, save_str, scroll_str};
+        draw_footer(actions, 4);
+    } else {
+        const char *actions[] = {o_str, scroll_str};
+        draw_footer(actions, 2);
+    }
 }
 
 void draw_ftp_server() {
@@ -1129,7 +1182,7 @@ void draw_actions_menu() {
     vita2d_draw_rectangle(0, 0, 960, 544, RGBA8(0, 0, 0, 100));
     
     int menu_w = 320;
-    int menu_h = 390;
+    int menu_h = 420;
     int menu_x = (960 - menu_w) / 2;
     int menu_y = (544 - menu_h) / 2;
     vita2d_draw_rectangle(menu_x, menu_y, menu_w, menu_h, RGBA8(22, 27, 34, 245));
@@ -1139,7 +1192,7 @@ void draw_actions_menu() {
     vita2d_pgf_draw_textf(font, menu_x + 20, menu_y + 30, RGBA8(240, 246, 252, 255), 1.0f, "%s", title);
     vita2d_draw_rectangle(menu_x + 10, menu_y + 45, menu_w - 20, 1, RGBA8(48, 54, 61, 255));
     
-    const char *options[11];
+    const char *options[12];
     options[0] = language_get(&lang, STR_COPY);
     options[1] = language_get(&lang, STR_CUT);
     options[2] = language_get(&lang, STR_PASTE);
@@ -1154,38 +1207,48 @@ void draw_actions_menu() {
         options[8] = "Calcola MD5/SHA-256";
         options[9] = "Visualizzatore Hex";
         options[10] = "Proprieta & Permessi";
+        options[11] = "Modifica File";
     } else if (curr_lang == LANG_ES) {
         options[8] = "Calcular MD5/SHA-256";
         options[9] = "Visor Hexadecimal";
         options[10] = "Propiedades & Permisos";
+        options[11] = "Editar Archivo";
     } else if (curr_lang == LANG_FR) {
         options[8] = "Calculer MD5/SHA-256";
         options[9] = "Lecteur Hexadecimal";
         options[10] = "Proprietes & Permissions";
+        options[11] = "Modifier Fichier";
     } else if (curr_lang == LANG_DE) {
         options[8] = "MD5/SHA-256 berechnen";
         options[9] = "Hex-Betrachter";
         options[10] = "Eigenschaften & Berechtig.";
+        options[11] = "Datei bearbeiten";
     } else if (curr_lang == LANG_JPN) {
         options[8] = "MD5/SHA-256を計算";
         options[9] = "16進数ビューア";
         options[10] = "プロパティとアクセス権";
+        options[11] = "ファイルを編集";
     } else {
         options[8] = "Calculate MD5/SHA-256";
         options[9] = "Hex Viewer";
         options[10] = "Properties & Perms";
+        options[11] = "Edit File";
     }
-    int num_options = 11;
+    int num_options = 12;
     
     int start_y = menu_y + 60;
     int row_h = 28;
     int is_dir = (browser.file_count > 0) ? browser.files[browser.selected_index].is_directory : 0;
+    const char *sel_name = (browser.file_count > 0) ? browser.files[browser.selected_index].name : "";
+    const char *sel_ext = strrchr(sel_name, '.');
+    int can_edit = !is_dir && (is_viewable_text_file(sel_name) || (sel_ext && strcasecmp(sel_ext, ".sfo") == 0));
 
     for (int i = 0; i < num_options; i++) {
         int ry = start_y + (i * row_h);
         int is_selected = (i == actions_menu_selected);
         int is_disabled = (i == 2 && clipboard_file_count == 0) ||
-                          ((i == 8 || i == 9) && is_dir);
+                          ((i == 8 || i == 9) && is_dir) ||
+                          (i == 11 && !can_edit);
         
         if (is_selected) {
             vita2d_draw_rectangle(menu_x + 10, ry - 4, menu_w - 20, row_h, RGBA8(31, 111, 235, 40));

@@ -70,7 +70,7 @@ static int open_archive_reader(const char *path, const char *password) {
         archive_read_add_passphrase(zip_archive, password);
     }
     
-    if (archive_read_open_filename(zip_archive, path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(zip_archive, path) != ARCHIVE_OK) {
         archive_read_free(zip_archive);
         zip_archive = NULL;
         return -1;
@@ -234,7 +234,7 @@ int zip_extract_file_to(const char *archive_path, int file_index, const char *de
         archive_read_add_passphrase(archive, info->password);
     }
 
-    if (archive_read_open_filename(archive, archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(archive, archive_path) != ARCHIVE_OK) {
         archive_read_free(archive);
         return -1;
     }
@@ -431,7 +431,7 @@ int archive_test_integrity(ArchiveInfo *info, int *progress) {
         archive_read_add_passphrase(a, info->password);
     }
     
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
@@ -464,4 +464,90 @@ int archive_test_integrity(ArchiveInfo *info, int *progress) {
     
     archive_read_free(a);
     return result;
+}
+
+struct SplitReaderData {
+    char base_path[1024];
+    int current_part;
+    SceUID fd;
+    char read_buf[16384];
+};
+
+static int split_open(struct archive *a, void *client_data) {
+    struct SplitReaderData *data = (struct SplitReaderData *)client_data;
+    char part_path[2048];
+    snprintf(part_path, sizeof(part_path), "%s%03d", data->base_path, data->current_part);
+    
+    data->fd = sceIoOpen(part_path, SCE_O_RDONLY, 0);
+    if (data->fd < 0) return ARCHIVE_FATAL;
+    return ARCHIVE_OK;
+}
+
+static la_ssize_t split_read(struct archive *a, void *client_data, const void **buff) {
+    struct SplitReaderData *data = (struct SplitReaderData *)client_data;
+    *buff = data->read_buf;
+    
+    int bytes = sceIoRead(data->fd, data->read_buf, sizeof(data->read_buf));
+    if (bytes < 0) return ARCHIVE_FATAL;
+    
+    if (bytes == 0) {
+        sceIoClose(data->fd);
+        data->current_part++;
+        
+        char part_path[2048];
+        snprintf(part_path, sizeof(part_path), "%s%03d", data->base_path, data->current_part);
+        
+        data->fd = sceIoOpen(part_path, SCE_O_RDONLY, 0);
+        if (data->fd < 0) {
+            data->fd = -1;
+            return 0;
+        }
+        
+        bytes = sceIoRead(data->fd, data->read_buf, sizeof(data->read_buf));
+        if (bytes < 0) return ARCHIVE_FATAL;
+    }
+    
+    return bytes;
+}
+
+static int split_close(struct archive *a, void *client_data) {
+    struct SplitReaderData *data = (struct SplitReaderData *)client_data;
+    if (data) {
+        if (data->fd >= 0) {
+            sceIoClose(data->fd);
+        }
+        free(data);
+    }
+    return ARCHIVE_OK;
+}
+
+int open_archive_read(struct archive *a, const char *path) {
+    const char *ext = strrchr(path, '.');
+    int is_split = 0;
+    if (ext && strlen(ext) == 4) {
+        is_split = 1;
+        for (int i = 1; i <= 3; i++) {
+            if (ext[i] < '0' || ext[i] > '9') {
+                is_split = 0;
+                break;
+            }
+        }
+    }
+    
+    if (is_split) {
+        struct SplitReaderData *data = malloc(sizeof(struct SplitReaderData));
+        if (!data) return ARCHIVE_FATAL;
+        
+        size_t len = ext - path + 1;
+        if (len >= 1024) len = 1023;
+        strncpy(data->base_path, path, len);
+        data->base_path[len] = '\0';
+        
+        data->current_part = atoi(ext + 1);
+        data->fd = -1;
+        
+        return archive_read_open(a, data, split_open, split_read, split_close);
+    } else {
+        return archive_read_open_filename(a, path, 10240);
+    }
 }

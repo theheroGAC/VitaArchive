@@ -59,7 +59,7 @@ int archive7z_list_files(ArchiveInfo *info) {
         archive_read_add_passphrase(a, info->password);
     }
     
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
@@ -141,7 +141,7 @@ int archive7z_extract_all(const char *dest, ArchiveInfo *info, int *progress) {
         archive_read_add_passphrase(a, info->password);
     }
     
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
@@ -199,7 +199,7 @@ int archive7z_extract_file(const char *dest, int file_index, ArchiveInfo *info) 
         archive_read_add_passphrase(a, info->password);
     }
 
-    if (archive_read_open_filename(a, info->archive_path, 10240) != ARCHIVE_OK) {
+    if (open_archive_read(a, info->archive_path) != ARCHIVE_OK) {
         archive_read_free(a);
         return -1;
     }
