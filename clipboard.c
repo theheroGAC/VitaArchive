@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,13 +12,13 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
+#include <psp2/io/devctl.h>
 #include <psp2/appmgr.h>
 #include "globals.h"
 #include "clipboard.h"
 
 int get_partition_free_space(const char *path, uint64_t *free_space, uint64_t *total_space) {
     char dev_name[16] = {0};
-    char query_path[32] = {0};
     const char *colon = strchr(path, ':');
     if (colon) {
         size_t len = colon - path + 1;
@@ -31,21 +32,34 @@ int get_partition_free_space(const char *path, uint64_t *free_space, uint64_t *t
         strcpy(dev_name, "ux0:");
     }
     
-    strcpy(query_path, dev_name);
-    strcat(query_path, "/");
     
-    uint64_t max_size = 0, free_size = 0;
-    int res = sceAppMgrGetDevInfo(dev_name, &max_size, &free_size);
-    if (res == 0) {
-        if (free_space) *free_space = free_size;
-        if (total_space) *total_space = max_size;
+    if (strcmp(dev_name, "app0:") == 0) {
+        strcpy(dev_name, "ux0:");
+    }
+    
+    
+    typedef struct {
+        int64_t max_size;
+        int64_t free_size;
+        uint32_t cluster_size;
+        void *unk;
+    } DevInfo;
+    
+    DevInfo info;
+    memset(&info, 0, sizeof(info));
+    int res = sceIoDevctl(dev_name, 0x3001, NULL, 0, &info, sizeof(info));
+    if (res >= 0) {
+        if (free_space) *free_space = (uint64_t)info.free_size;
+        if (total_space) *total_space = (uint64_t)info.max_size;
         return 0;
     }
     
-    struct statvfs buf;
-    if (statvfs(query_path, &buf) == 0) {
-        if (free_space) *free_space = (uint64_t)buf.f_bavail * buf.f_frsize;
-        if (total_space) *total_space = (uint64_t)buf.f_blocks * buf.f_frsize;
+    
+    uint64_t max_size = 0, free_size = 0;
+    res = sceAppMgrGetDevInfo(dev_name, &max_size, &free_size);
+    if (res == 0) {
+        if (free_space) *free_space = free_size;
+        if (total_space) *total_space = max_size;
         return 0;
     }
     

@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -174,8 +175,19 @@ void get_file_visuals(const char *path, int is_directory, const char **icon, uin
         *icon = "[PSA]";
         *icon_color = RGBA8(243, 156, 18, 255);
     } else {
-        *icon = "[FILE]";
-        *icon_color = RGBA8(110, 118, 129, 255);
+        const char *ext = strrchr(path, '.');
+        const char *filename = strrchr(path, '/');
+        if (!filename) filename = strrchr(path, '\\');
+        if (!filename) filename = path;
+        else filename++;
+
+        if ((ext && strcasecmp(ext, ".self") == 0) || strcasecmp(filename, "eboot.bin") == 0) {
+            *icon = "[SELF]";
+            *icon_color = RGBA8(155, 89, 182, 255);
+        } else {
+            *icon = "[FILE]";
+            *icon_color = RGBA8(110, 118, 129, 255);
+        }
     }
 }
 
@@ -989,28 +1001,46 @@ void draw_text_preview() {
     
     int preview_is_local = (strncmp(preview_filepath, VPK_TEMP_DIR, strlen(VPK_TEMP_DIR)) != 0);
     if (preview_is_local && preview_line_count > 0) {
-        char edit_str[64], save_str[64];
+        char edit_str[64], save_str[64], add_str[64], del_str[64];
         if (cl == LANG_IT) {
             snprintf(edit_str, sizeof(edit_str), "X: Modifica");
             snprintf(save_str, sizeof(save_str), "TRI: Salva");
+            snprintf(add_str, sizeof(add_str), "SQ: Inserisci");
+            snprintf(del_str, sizeof(del_str), "L: Elimina");
         } else if (cl == LANG_ES) {
             snprintf(edit_str, sizeof(edit_str), "X: Editar");
             snprintf(save_str, sizeof(save_str), "TRI: Guardar");
+            snprintf(add_str, sizeof(add_str), "SQ: Insertar");
+            snprintf(del_str, sizeof(del_str), "L: Eliminar");
         } else if (cl == LANG_FR) {
             snprintf(edit_str, sizeof(edit_str), "X: Modifier");
             snprintf(save_str, sizeof(save_str), "TRI: Sauvegarder");
+            snprintf(add_str, sizeof(add_str), "SQ: Insérer");
+            snprintf(del_str, sizeof(del_str), "L: Supprimer");
         } else if (cl == LANG_DE) {
             snprintf(edit_str, sizeof(edit_str), "X: Bearbeiten");
             snprintf(save_str, sizeof(save_str), "TRI: Speichern");
+            snprintf(add_str, sizeof(add_str), "SQ: Einfügen");
+            snprintf(del_str, sizeof(del_str), "L: Löschen");
         } else if (cl == LANG_JPN) {
             snprintf(edit_str, sizeof(edit_str), "X: 編集");
             snprintf(save_str, sizeof(save_str), "TRI: 保存");
+            snprintf(add_str, sizeof(add_str), "SQ: 挿入");
+            snprintf(del_str, sizeof(del_str), "L: 削除");
         } else {
             snprintf(edit_str, sizeof(edit_str), "X: Edit");
             snprintf(save_str, sizeof(save_str), "TRI: Save");
+            snprintf(add_str, sizeof(add_str), "SQ: Insert");
+            snprintf(del_str, sizeof(del_str), "L: Delete");
         }
-        const char *actions[] = {o_str, edit_str, save_str, scroll_str};
-        draw_footer(actions, 4);
+        
+        if (preview_is_sfo) {
+            const char *actions[] = {o_str, edit_str, save_str, scroll_str};
+            draw_footer(actions, 4);
+        } else {
+            const char *actions[] = {o_str, edit_str, save_str, add_str, del_str, scroll_str};
+            draw_footer(actions, 6);
+        }
     } else {
         const char *actions[] = {o_str, scroll_str};
         draw_footer(actions, 2);
@@ -1182,7 +1212,7 @@ void draw_actions_menu() {
     vita2d_draw_rectangle(0, 0, 960, 544, RGBA8(0, 0, 0, 100));
     
     int menu_w = 320;
-    int menu_h = 420;
+    int menu_h = 440;
     int menu_x = (960 - menu_w) / 2;
     int menu_y = (544 - menu_h) / 2;
     vita2d_draw_rectangle(menu_x, menu_y, menu_w, menu_h, RGBA8(22, 27, 34, 245));
@@ -1192,7 +1222,7 @@ void draw_actions_menu() {
     vita2d_pgf_draw_textf(font, menu_x + 20, menu_y + 30, RGBA8(240, 246, 252, 255), 1.0f, "%s", title);
     vita2d_draw_rectangle(menu_x + 10, menu_y + 45, menu_w - 20, 1, RGBA8(48, 54, 61, 255));
     
-    const char *options[12];
+    const char *options[13];
     options[0] = language_get(&lang, STR_COPY);
     options[1] = language_get(&lang, STR_CUT);
     options[2] = language_get(&lang, STR_PASTE);
@@ -1208,33 +1238,39 @@ void draw_actions_menu() {
         options[9] = "Visualizzatore Hex";
         options[10] = "Proprieta & Permessi";
         options[11] = "Modifica File";
+        options[12] = "Installa App (Promuovi)";
     } else if (curr_lang == LANG_ES) {
         options[8] = "Calcular MD5/SHA-256";
         options[9] = "Visor Hexadecimal";
         options[10] = "Propiedades & Permisos";
         options[11] = "Editar Archivo";
+        options[12] = "Instalar App (Promover)";
     } else if (curr_lang == LANG_FR) {
         options[8] = "Calculer MD5/SHA-256";
         options[9] = "Lecteur Hexadecimal";
         options[10] = "Proprietes & Permissions";
         options[11] = "Modifier Fichier";
+        options[12] = "Installer App (Promouvoir)";
     } else if (curr_lang == LANG_DE) {
         options[8] = "MD5/SHA-256 berechnen";
         options[9] = "Hex-Betrachter";
         options[10] = "Eigenschaften & Berechtig.";
         options[11] = "Datei bearbeiten";
+        options[12] = "App installieren (Promote)";
     } else if (curr_lang == LANG_JPN) {
-        options[8] = "MD5/SHA-256を計算";
-        options[9] = "16進数ビューア";
-        options[10] = "プロパティとアクセス権";
-        options[11] = "ファイルを編集";
+        options[8] = "MD5/SHA-256\xe3\x82\x92\xe8\xa8\x88\xe7\xa6\x97";
+        options[9] = "16\xe9\x80\xb2\xe6\x95\xb0\xe3\x83\x93\xe3\x83\xa5\xe3\x83\xbc\xe3\x82\xa2";
+        options[10] = "\xe3\x83\x97\xe3\x83\xad\xe3\x83\xb1\xe3\x83\x86\xe3\x82\xa3\xe3\x81\xa8\xe3\x82\xa2\xe3\x82\xaf\xe3\x82\xb5\xe3\x82\xb9\xe6\xa8\xa9";
+        options[11] = "\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x82\x92\xe7\xb7\xa8\xe9\x9b\x86";
+        options[12] = "\xe3\x82\xa2\xe3\x83\x97\xe3\x83\xb3\xe3\x82\x92\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xb9\xe3\x83\x88\xe3\x83\xbc\xe3\x83\xab (\xe6\x98\x87\xe6\xa0\xbc)";
     } else {
         options[8] = "Calculate MD5/SHA-256";
         options[9] = "Hex Viewer";
         options[10] = "Properties & Perms";
         options[11] = "Edit File";
+        options[12] = "Install App (Promote)";
     }
-    int num_options = 12;
+    int num_options = 13;
     
     int start_y = menu_y + 60;
     int row_h = 28;
@@ -1242,13 +1278,23 @@ void draw_actions_menu() {
     const char *sel_name = (browser.file_count > 0) ? browser.files[browser.selected_index].name : "";
     const char *sel_ext = strrchr(sel_name, '.');
     int can_edit = !is_dir && (is_viewable_text_file(sel_name) || (sel_ext && strcasecmp(sel_ext, ".sfo") == 0));
+    int can_promote = 0;
+    if (is_dir && browser.file_count > 0) {
+        char sfo_path[1024];
+        snprintf(sfo_path, sizeof(sfo_path), "%s%s/sce_sys/param.sfo", browser.current_path, sel_name);
+        SceIoStat sfo_stat;
+        if (sceIoGetstat(sfo_path, &sfo_stat) >= 0) {
+            can_promote = 1;
+        }
+    }
 
     for (int i = 0; i < num_options; i++) {
         int ry = start_y + (i * row_h);
         int is_selected = (i == actions_menu_selected);
         int is_disabled = (i == 2 && clipboard_file_count == 0) ||
                           ((i == 8 || i == 9) && is_dir) ||
-                          (i == 11 && !can_edit);
+                          (i == 11 && !can_edit) ||
+                          (i == 12 && !can_promote);
         
         if (is_selected) {
             vita2d_draw_rectangle(menu_x + 10, ry - 4, menu_w - 20, row_h, RGBA8(31, 111, 235, 40));
@@ -1509,28 +1555,78 @@ void draw_hex_view() {
 void draw_properties_view() {
     vita2d_draw_rectangle(0, 0, 960, 50, RGBA8(21, 26, 33, 255));
     
+    LanguageCode cl = language_get_current(&lang);
     const char *basename = path_basename(prop_filepath);
-    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "Proprieta - %s", basename);
+    
+    const char *title = "Properties";
+    const char *lbl_name = "Name:";
+    const char *lbl_path = "Path:";
+    const char *lbl_type = "Type:";
+    const char *lbl_size = "Size:";
+    const char *val_folder = "Folder";
+    const char *val_file = "File";
+    
+    if (cl == LANG_IT) {
+        title = "Proprieta";
+        lbl_name = "Nome:";
+        lbl_path = "Percorso:";
+        lbl_type = "Tipo:";
+        lbl_size = "Dimensione:";
+        val_folder = "Cartella";
+        val_file = "File";
+    } else if (cl == LANG_ES) {
+        title = "Propiedades";
+        lbl_name = "Nombre:";
+        lbl_path = "Ruta:";
+        lbl_type = "Tipo:";
+        lbl_size = "Tama\xc3\xb1o:";
+        val_folder = "Carpeta";
+        val_file = "Archivo";
+    } else if (cl == LANG_FR) {
+        title = "Proprietes";
+        lbl_name = "Nom:";
+        lbl_path = "Chemin:";
+        lbl_type = "Type:";
+        lbl_size = "Taille:";
+        val_folder = "Dossier";
+        val_file = "Fichier";
+    } else if (cl == LANG_DE) {
+        title = "Eigenschaften";
+        lbl_name = "Name:";
+        lbl_path = "Pfad:";
+        lbl_type = "Typ:";
+        lbl_size = "Groesse:";
+        val_folder = "Ordner";
+        val_file = "Datei";
+    } else if (cl == LANG_JPN) {
+        title = "\xe3\x83\x97\xe3\x83\xad\xe3\x83\xb1\xe3\x83\x86\xe3\x82\xa3";
+        lbl_name = "\xe5\x90\x8d\xe5\x89\x8d:";
+        lbl_path = "\xe3\x83\x91\xe3\x82\xb9:";
+        lbl_type = "\xe7\xa8\xae\xe9\xa1\x9e:";
+        lbl_size = "\xe3\x82\xb5\xe3\x82\xa4\xe3\x82\xba:";
+        val_folder = "\xe3\x83\x95\xe3\x82\xa9\xe3\x83\xab\xe3\x83\x80";
+        val_file = "\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab";
+    }
+    
+    vita2d_pgf_draw_textf(font, 10, 30, RGBA8(240, 246, 252, 255), 1.0f, "%s - %s", title, basename);
     
     int panel_y = 65;
     vita2d_draw_rectangle(20, panel_y, 920, 435, RGBA8(22, 27, 34, 255));
     vita2d_draw_rectangle(20, panel_y, 920, 2, RGBA8(31, 111, 235, 255));
     
-    LanguageCode cl = language_get_current(&lang);
-    
     int info_y = panel_y + 20;
-    vita2d_pgf_draw_textf(font, 40, info_y + 15, RGBA8(31, 111, 235, 255), 0.85f, "Nome:");
+    vita2d_pgf_draw_textf(font, 40, info_y + 15, RGBA8(31, 111, 235, 255), 0.85f, "%s", lbl_name);
     vita2d_pgf_draw_textf(font, 140, info_y + 15, RGBA8(240, 246, 252, 255), 0.85f, "%s", basename);
     
-    vita2d_pgf_draw_textf(font, 40, info_y + 40, RGBA8(31, 111, 235, 255), 0.85f, "Percorso:");
+    vita2d_pgf_draw_textf(font, 40, info_y + 40, RGBA8(31, 111, 235, 255), 0.85f, "%s", lbl_path);
     vita2d_pgf_draw_textf(font, 140, info_y + 40, RGBA8(201, 209, 217, 255), 0.8f, "%s", prop_filepath);
     
-    vita2d_pgf_draw_textf(font, 40, info_y + 65, RGBA8(31, 111, 235, 255), 0.85f, "Tipo:");
+    vita2d_pgf_draw_textf(font, 40, info_y + 65, RGBA8(31, 111, 235, 255), 0.85f, "%s", lbl_type);
     int is_dir = SCE_S_ISDIR(prop_stat.st_mode);
     vita2d_pgf_draw_textf(font, 140, info_y + 65, RGBA8(201, 209, 217, 255), 0.85f, "%s", 
-        is_dir ? "Cartella / Directory" : "File");
+        is_dir ? val_folder : val_file);
         
-    vita2d_pgf_draw_textf(font, 40, info_y + 90, RGBA8(31, 111, 235, 255), 0.85f, "Dimensione:");
+    vita2d_pgf_draw_textf(font, 40, info_y + 90, RGBA8(31, 111, 235, 255), 0.85f, "%s", lbl_size);
     char sz_str[64];
     format_size(sz_str, prop_stat.st_size);
     vita2d_pgf_draw_textf(font, 140, info_y + 90, RGBA8(201, 209, 217, 255), 0.85f, "%s (%llu B)", sz_str, (unsigned long long)prop_stat.st_size);
@@ -1546,23 +1642,44 @@ void draw_properties_view() {
         
     const char *labels[6];
     if (cl == LANG_IT) {
-        labels[0] = "Sola Lettura (Read-Only)";
-        labels[1] = "Nascosto (Hidden)";
-        labels[2] = "Sistema (System)";
-        labels[3] = "Permesso di Lettura Proprietario (Unix User Read)";
-        labels[4] = "Permesso di Scrittura Proprietario (Unix User Write)";
-        labels[5] = "Permesso di Esecuzione Proprietario (Unix User Execute)";
+        labels[0] = "Sola Lettura";
+        labels[1] = "Nascosto";
+        labels[2] = "Sistema";
+        labels[3] = "Permesso di Lettura Proprietario";
+        labels[4] = "Permesso di Scrittura Proprietario";
+        labels[5] = "Permesso di Esecuzione Proprietario";
     } else if (cl == LANG_ES) {
-        labels[0] = "Solo Lectura (Read-Only)";
-        labels[1] = "Oculto (Hidden)";
-        labels[2] = "Sistema (System)";
-        labels[3] = "Permiso de Lectura (Unix User Read)";
-        labels[4] = "Permiso de Escritura (Unix User Write)";
-        labels[5] = "Permiso de Ejecucion (Unix User Execute)";
+        labels[0] = "Solo Lectura";
+        labels[1] = "Oculto";
+        labels[2] = "Sistema";
+        labels[3] = "Permiso de Lectura";
+        labels[4] = "Permiso de Escritura";
+        labels[5] = "Permiso de Ejecucion";
+    } else if (cl == LANG_FR) {
+        labels[0] = "Lecture Seule";
+        labels[1] = "Cache";
+        labels[2] = "Systeme";
+        labels[3] = "Permission de Lecture Proprietaire";
+        labels[4] = "Permission d'Ecriture Proprietaire";
+        labels[5] = "Permission d'Execution Proprietaire";
+    } else if (cl == LANG_DE) {
+        labels[0] = "Schreibgeschuetzt";
+        labels[1] = "Versteckt";
+        labels[2] = "System";
+        labels[3] = "Unix-Benutzer Leseberechtigung";
+        labels[4] = "Unix-Benutzer Schreibberechtigung";
+        labels[5] = "Unix-Benutzer Ausfuehrungsberechtigung";
+    } else if (cl == LANG_JPN) {
+        labels[0] = "\xe8\xaa\xad\xe3\x81\xbf\xe5\x8f\x96\xe3\x82\x8a\xe5\xb0\x82\xe7\x94\xa8";
+        labels[1] = "\xe9\x9d\x9e\xe8\xa1\xa8\xe7\xa4\xba";
+        labels[2] = "\xe3\x82\xb7\xe3\x82\xb9\xe3\x83\x86\xe3\x83\xa0";
+        labels[3] = "\xe6\x89\x80\xe6\x9c\x89\xe8\x80\x85\xe3\x81\xae\xe8\xaa\xad\xe3\x81\xbf\xe5\x8f\x96\xe3\x82\x8a\xe6\xa8\xa9\xe9\x99\x90";
+        labels[4] = "\xe6\x89\x80\xe6\x9c\x89\xe8\x80\x85\xe3\x81\xae\xe6\x9b\xb8\xe3\x81\x8d\xe8\xbe\xbc\xe3\x81\xbf\xe6\xa8\xa9\xe9\x99\x90";
+        labels[5] = "\xe6\x89\x80\xe6\x9c\x89\xe8\x80\x85\xe3\x81\xae\xe5\xae\x9f\xe8\xa1\x8c\xe6\xa8\xa9\xe9\x99\x90";
     } else {
-        labels[0] = "Read-Only (Sola Lettura)";
-        labels[1] = "Hidden (Nascosto)";
-        labels[2] = "System (Sistema)";
+        labels[0] = "Read-Only";
+        labels[1] = "Hidden";
+        labels[2] = "System";
         labels[3] = "Unix User Read Permission";
         labels[4] = "Unix User Write Permission";
         labels[5] = "Unix User Execute Permission";

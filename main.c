@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
@@ -22,6 +23,7 @@
 #include <string.h>
 #include <psp2/sysmodule.h>
 #include <psp2/promoterutil.h>
+#include <psp2/appmgr.h>
 
 #include <sys/types.h>
 #include <errno.h>
@@ -349,6 +351,8 @@ static void load_sfo_preview(const char *path) {
     }
 }
 
+
+
 static int try_open_archive(const char *path, ArchiveInfo *info) {
     if (is_zip_file(path) || is_vpk_file(path) ||
         is_tar_file(path) || is_gzip_file(path) ||
@@ -379,6 +383,19 @@ static int try_open_archive_with_password(const char *path, ArchiveInfo *info) {
         }
     }
     return open_res;
+}
+
+static void get_name_without_extension(char *out, const char *filename) {
+    const char *base = strrchr(filename, '/');
+    if (!base) base = strrchr(filename, '\\');
+    if (!base) base = filename;
+    else base++;
+    
+    strcpy(out, base);
+    char *ext = strrchr(out, '.');
+    if (ext && ext != out) {
+        *ext = '\0';
+    }
 }
 
 static int get_ime_input(char *output, int max_len, const char *title, const char *initial_text) {
@@ -414,8 +431,12 @@ static int get_ime_input(char *output, int max_len, const char *title, const cha
     while (1) {
         vita2d_start_drawing();
         vita2d_clear_screen();
-        draw_browser();
-        draw_browser_footer();
+        if (current_mode == MODE_TEXT_PREVIEW) {
+            draw_text_preview();
+        } else {
+            draw_browser();
+            draw_browser_footer();
+        }
         vita2d_end_drawing();
         vita2d_common_dialog_update();
         vita2d_swap_buffers();
@@ -495,8 +516,6 @@ int archive_extract_file_custom(const char *dest, int file_index, ArchiveInfo *i
     }
     return -1;
 }
-
-
 
 static int worker_thread_func(SceSize args, void *argp) {
     WorkerArgs *wargs = (WorkerArgs *)argp;
@@ -785,9 +804,9 @@ int main() {
                     } else if (smart_install_available) {
                         current_mode = MODE_SMART_INSTALL_CONFIRM;
                     } else {
-
                         extract_selected_only = 1;
                         extract_file_index = archive_selected;
+                        worker_args.mode = 1;
                         current_mode = MODE_DEST_BROWSER;
                         filebrowser_init(&browser, "ux0:/");
                         scroll_offset = 0;
@@ -810,12 +829,14 @@ int main() {
                         } else {
                             archive_stack_depth = 0;
                             current_mode = MODE_BROWSER;
+                            filebrowser_refresh(&browser);
                         }
                     } else {
                         archive_close_custom(&archive_info);
                         archive_stack_depth = 0;
                         current_mode = MODE_BROWSER;
                         vpk_cleanup_dirs();
+                        filebrowser_refresh(&browser);
                     }
                 } else if (pressed & SCE_CTRL_SQUARE) {
                     if (archive_info.file_count > 0) {
@@ -1007,13 +1028,19 @@ int main() {
                                 "Extraction complete";
                             show_toast(ok, RGBA8(46, 204, 113, 255));
                         } else {
-                            const char *err =
-                                (cl == LANG_IT) ? "Errore durante l'estrazione" :
-                                (cl == LANG_ES) ? "Error durante la extraccion" :
-                                (cl == LANG_FR) ? "Erreur lors de l'extraction" :
-                                (cl == LANG_DE) ? "Fehler beim Entpacken" :
-                                "Extraction failed";
-                            show_toast(err, RGBA8(231, 76, 60, 255));
+                            char err_msg[256];
+                            if (cl == LANG_IT) {
+                                snprintf(err_msg, sizeof(err_msg), "Errore estrazione: 0x%08X", worker_result);
+                            } else if (cl == LANG_ES) {
+                                snprintf(err_msg, sizeof(err_msg), "Error de extraccion: 0x%08X", worker_result);
+                            } else if (cl == LANG_FR) {
+                                snprintf(err_msg, sizeof(err_msg), "Erreur d'extraction: 0x%08X", worker_result);
+                            } else if (cl == LANG_DE) {
+                                snprintf(err_msg, sizeof(err_msg), "Entpackfehler: 0x%08X", worker_result);
+                            } else {
+                                snprintf(err_msg, sizeof(err_msg), "Extraction error: 0x%08X", worker_result);
+                            }
+                            show_toast(err_msg, RGBA8(231, 76, 60, 255));
                         }
                     }
                 }
@@ -1129,7 +1156,25 @@ int main() {
                 if (pressed & SCE_CTRL_CIRCLE) filebrowser_navigate_back(&browser);
 
                 if (pressed & SCE_CTRL_SQUARE) {
+                    char folder_name[256] = {0};
+                    if (worker_args.mode == 0 || worker_args.mode == 7) {
+                        get_name_without_extension(folder_name, archive_info.archive_path);
+                    } else if (worker_args.mode == 1) {
+                        if (extract_file_index >= 0 && extract_file_index < archive_info.file_count) {
+                            get_name_without_extension(folder_name, archive_info.files[extract_file_index].filename);
+                        }
+                    }
+                    
                     snprintf(extraction_dest_path, sizeof(extraction_dest_path), "%s", browser.current_path);
+                    if (folder_name[0] != '\0') {
+                        size_t len = strlen(extraction_dest_path);
+                        if (len > 0 && extraction_dest_path[len - 1] != '/') {
+                            strcat(extraction_dest_path, "/");
+                        }
+                        strcat(extraction_dest_path, folder_name);
+                        strcat(extraction_dest_path, "/");
+                    }
+                    
                     current_mode = MODE_EXTRACTING;
                     extract_progress = 0;
                 }
@@ -1362,6 +1407,41 @@ int main() {
                                 }
                             }
                         }
+                    } else if (pressed & SCE_CTRL_SQUARE) {
+                        if (preview_is_local && !preview_is_sfo && preview_line_count < MAX_PREVIEW_LINES) {
+                            char new_line[MAX_PREVIEW_LINE_LEN];
+                            memset(new_line, 0, sizeof(new_line));
+                            if (get_ime_input(new_line, MAX_PREVIEW_LINE_LEN - 1, "Insert Line", "") == 0) {
+                                int insert_idx = (preview_line_count > 0) ? preview_selected_line + 1 : 0;
+                                for (int i = preview_line_count; i > insert_idx; i--) {
+                                    strncpy(preview_lines[i], preview_lines[i - 1], MAX_PREVIEW_LINE_LEN - 1);
+                                    preview_lines[i][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+                                }
+                                strncpy(preview_lines[insert_idx], new_line, MAX_PREVIEW_LINE_LEN - 1);
+                                preview_lines[insert_idx][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+                                preview_line_count++;
+                                if (preview_line_count > 1) {
+                                    preview_selected_line = insert_idx;
+                                    if (preview_selected_line >= preview_scroll + visible_lines) {
+                                        preview_scroll = preview_selected_line - visible_lines + 1;
+                                    }
+                                }
+                            }
+                        }
+                    } else if (pressed & SCE_CTRL_LTRIGGER) {
+                        if (preview_is_local && !preview_is_sfo && preview_line_count > 0) {
+                            for (int i = preview_selected_line; i < preview_line_count - 1; i++) {
+                                strncpy(preview_lines[i], preview_lines[i + 1], MAX_PREVIEW_LINE_LEN - 1);
+                                preview_lines[i][MAX_PREVIEW_LINE_LEN - 1] = '\0';
+                            }
+                            preview_line_count--;
+                            if (preview_selected_line >= preview_line_count && preview_line_count > 0) {
+                                preview_selected_line = preview_line_count - 1;
+                            }
+                            if (preview_scroll > 0 && preview_selected_line < preview_scroll) {
+                                preview_scroll = preview_selected_line;
+                            }
+                        }
                     }
                 }
                 break;
@@ -1370,16 +1450,16 @@ int main() {
                 if (pressed & SCE_CTRL_CIRCLE) {
                     ftp_server_stop();
                     current_mode = MODE_BROWSER;
-                    filebrowser_refresh(&browser);
+                filebrowser_refresh(&browser);
                 }
                 break;
             
             case MODE_ACTIONS_MENU:
                 if ((pressed | repeat_event) & SCE_CTRL_UP) {
                     if (actions_menu_selected > 0) actions_menu_selected--;
-                    else actions_menu_selected = 11;
+                    else actions_menu_selected = 12;
                 } else if ((pressed | repeat_event) & SCE_CTRL_DOWN) {
-                    if (actions_menu_selected < 11) actions_menu_selected++;
+                    if (actions_menu_selected < 12) actions_menu_selected++;
                     else actions_menu_selected = 0;
                 } else if (pressed & SCE_CTRL_CIRCLE) {
                     current_mode = MODE_BROWSER;
@@ -1559,6 +1639,39 @@ int main() {
                         } else {
                             current_mode = MODE_BROWSER;
                         }
+                    } else if (actions_menu_selected == 12) {
+                        if (browser.file_count > 0) {
+                            int is_dir = browser.files[browser.selected_index].is_directory;
+                            const char *name = browser.files[browser.selected_index].name;
+                            int can_promote = 0;
+                            if (is_dir) {
+                                char sfo_path[1024];
+                                snprintf(sfo_path, sizeof(sfo_path), "%s%s/sce_sys/param.sfo", browser.current_path, name);
+                                SceIoStat sfo_stat;
+                                if (sceIoGetstat(sfo_path, &sfo_stat) >= 0) {
+                                    can_promote = 1;
+                                }
+                            }
+                            if (can_promote) {
+                                char dir_path[1024];
+                                snprintf(dir_path, sizeof(dir_path), "%s%s", browser.current_path, name);
+                                
+                                scePromoterUtilityInit();
+                                int res = scePromoterUtilityPromotePkg(dir_path, 0);
+                                scePromoterUtilityExit();
+                                
+                                if (res >= 0) {
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "App promossa con successo!" : "App promoted successfully!";
+                                    show_toast(msg, RGBA8(46, 204, 113, 255));
+                                } else {
+                                    LanguageCode cl = language_get_current(&lang);
+                                    const char *msg = (cl == LANG_IT) ? "Errore promozione app!" : "Error promoting app!";
+                                    show_toast(msg, RGBA8(231, 76, 60, 255));
+                                }
+                            }
+                        }
+                        current_mode = MODE_BROWSER;
                     }
                 }
                 break;
@@ -1582,11 +1695,13 @@ int main() {
                             archive_selection_mask[archive_selected] = 1;
                         }
                         extract_selected_only = 2;
+                        worker_args.mode = 7;
                         current_mode = MODE_DEST_BROWSER;
                         filebrowser_init(&browser, "ux0:/");
                         scroll_offset = 0;
                     } else if (archive_actions_selected == 1) {
                         extract_selected_only = 0;
+                        worker_args.mode = 0;
                         current_mode = MODE_DEST_BROWSER;
                         filebrowser_init(&browser, "ux0:/");
                         scroll_offset = 0;

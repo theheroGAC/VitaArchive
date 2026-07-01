@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -152,7 +153,16 @@ int archive7z_extract_all(const char *dest, ArchiveInfo *info, int *progress) {
             return -1;
         }
         
-        snprintf(out_path, sizeof(out_path), "%s%s", dest, archive_entry_pathname(entry));
+        const char *entry_path = archive_entry_pathname(entry);
+        if (entry_path[0] == '/') {
+            entry_path++;
+        }
+        size_t dest_len = strlen(dest);
+        if (dest_len > 0 && dest[dest_len - 1] == '/') {
+            snprintf(out_path, sizeof(out_path), "%s%s", dest, entry_path);
+        } else {
+            snprintf(out_path, sizeof(out_path), "%s/%s", dest, entry_path);
+        }
         
         if (archive_entry_filetype(entry) == AE_IFDIR) {
             sceIoMkdir(out_path, 0777);
@@ -189,7 +199,16 @@ int archive7z_extract_file(const char *dest, int file_index, ArchiveInfo *info) 
     }
 
     char out_path[512];
-    snprintf(out_path, sizeof(out_path), "%s%s", dest, info->files[file_index].filename);
+    size_t dest_len = strlen(dest);
+    const char *filename = info->files[file_index].filename;
+    if (filename[0] == '/') {
+        filename++;
+    }
+    if (dest_len > 0 && dest[dest_len - 1] == '/') {
+        snprintf(out_path, sizeof(out_path), "%s%s", dest, filename);
+    } else {
+        snprintf(out_path, sizeof(out_path), "%s/%s", dest, filename);
+    }
 
     struct archive *a = archive_read_new();
     archive_read_support_filter_all(a);

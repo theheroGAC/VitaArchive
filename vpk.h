@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 #ifndef VPK_H
 #define VPK_H
 

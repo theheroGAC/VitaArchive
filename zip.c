@@ -1,9 +1,10 @@
-/*
+﻿/*
  * VitaArchive - File Archiver & Browser for PS Vita
  * Created by theheroGAC.
  * Special thanks to TheFloW, Rinnegatamante, SKGleba, and all developers, hackers,
  * and contributors of the PlayStation Vita homebrew scene.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -192,7 +193,16 @@ int zip_extract_all(const char *dest, ArchiveInfo *info, int *progress) {
             return -1;
         }
 
-        snprintf(out_path, sizeof(out_path), "%s%s", dest, archive_entry_pathname(entry));
+        const char *entry_path = archive_entry_pathname(entry);
+        if (entry_path[0] == '/') {
+            entry_path++;
+        }
+        size_t dest_len = strlen(dest);
+        if (dest_len > 0 && dest[dest_len - 1] == '/') {
+            snprintf(out_path, sizeof(out_path), "%s%s", dest, entry_path);
+        } else {
+            snprintf(out_path, sizeof(out_path), "%s/%s", dest, entry_path);
+        }
 
         if (archive_entry_filetype(entry) == AE_IFDIR) {
             sceIoMkdir(out_path, 0777);
@@ -210,6 +220,10 @@ int zip_extract_all(const char *dest, ArchiveInfo *info, int *progress) {
                     worker_processed_bytes += size;
                 }
                 sceIoClose(fd);
+            } else {
+                archive_read_free(zip_archive);
+                zip_archive = NULL;
+                return fd;
             }
         }
 
@@ -260,7 +274,7 @@ int zip_extract_file_to(const char *archive_path, int file_index, const char *de
             SceUID fd = sceIoOpen(dest_path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
             if (fd < 0) {
                 archive_read_free(archive);
-                return -3;
+                return fd;
             }
 
             const void *buff;
@@ -291,7 +305,16 @@ int zip_extract_file(const char *dest, int file_index, ArchiveInfo *info) {
     }
 
     char out_path[1024];
-    snprintf(out_path, sizeof(out_path), "%s/%s", dest, info->files[file_index].filename);
+    size_t dest_len = strlen(dest);
+    const char *filename = info->files[file_index].filename;
+    if (filename[0] == '/') {
+        filename++;
+    }
+    if (dest_len > 0 && dest[dest_len - 1] == '/') {
+        snprintf(out_path, sizeof(out_path), "%s%s", dest, filename);
+    } else {
+        snprintf(out_path, sizeof(out_path), "%s/%s", dest, filename);
+    }
     return zip_extract_file_to(info->archive_path, file_index, out_path, info);
 }
 
